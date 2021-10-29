@@ -1,0 +1,29 @@
+{
+  "name": "singui",
+  "version": "0.1.0-alpha.2",
+  "description": "The next-gen, no compile/transpile needed, self-contained JS UI library",
+  "main": "dist/main.js",
+  "module": "src/main.js",
+  "scripts": {
+    "build": "rollup -c ./rollup.config.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ClassicOldSong/SingUI.git"
+  },
+  "keywords": [
+    "singui"
+  ],
+  "author": "Yukino Song",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/ClassicOldSong/SingUI/issues"
+  },
+  "homepage": "https://github.com/ClassicOldSong/SingUI",
+  "devDependencies": {
+    "@rollup/plugin-buble": "^0.21.3",
+    "@rollup/plugin-commonjs": "^21.0.1",
+    "rollup": "^2.58.3",
+    "rollup-plugin-terser": "^7.0.2"
+  }
+}
