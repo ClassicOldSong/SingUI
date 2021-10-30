@@ -62,7 +62,7 @@ const create = ({
 	setAttr,
 	addEventListener,
 	removeEventListener
-}) => {
+}, ctx = {}) => {
 	const getAttrProxy = (element) => {
 		const attrProxy = new Proxy(element, {
 			get(_, attrName) {
@@ -84,116 +84,148 @@ const create = ({
 
 		return attrProxy
 	}
-	const getTextHandler = (ctx) => {
-		const text = (str) => {
-			const textNode = createTextNode(str)
-			appendChild(ctx.currentNode, textNode)
-			return reactive(textNode)
-		}
 
-		return text
+
+	const text = (str = '') => {
+		const textNode = createTextNode(str)
+		const reactiveNode = reactive(textNode)
+		if (ctx.currentNode) appendChild(ctx.currentNode, textNode)
+		if (ctx.currentChildren) ctx.currentChildren.push(reactiveNode)
+		return reactiveNode
 	}
 
-	const getTagsProxy = (ctx) => {
-		const tags = new Proxy(
-			{},
-			{
-				get(target, tagName) {
-					if (target[tagName]) return target[tagName]
+	const tags = new Proxy({}, {
+		get(target, tagName) {
+			if (target[tagName]) return target[tagName]
 
-					const tagScope = (builder) => {
-						const parentNode = ctx.currentNode
-						const element = createElement(tagName)
-						const attrProxy = getAttrProxy(element)
-						const propProxy = reactive(element)
+			const tagScope = (builder) => {
+				const parentNode = ctx.currentNode
+				const parentChildren = ctx.currentChildren
+				const element = createElement(tagName)
+				const attrProxy = getAttrProxy(element)
+				const propProxy = reactive(element)
 
-						if (parentNode) {
-							appendChild(parentNode, element)
-						}
+				if (parentNode) appendChild(parentNode, element)
+				if (parentChildren) parentChildren.push(propProxy)
 
-						const on = (...args) => addEventListener(element, ...args)
-						const off = (...args) => removeEventListener(element, ...args)
+				if (builder) {
+					const children = []
+					const on = (...args) => addEventListener(element, ...args)
+					const off = (...args) => removeEventListener(element, ...args)
 
-						const _build = (_builder) => {
-							const prevNode = ctx.currentNode
-							ctx.currentNode = element
-							_builder({
-								tags,
-								text: ctx.text,
-								el: element,
-								on,
-								off,
-								attr: attrProxy,
-								prop: propProxy,
-								$: attrProxy,
-								$$: propProxy,
-								build: _build,
-								_: _build,
-								parent: parentNode
-							})
-							ctx.currentNode = prevNode
-						}
-
-						if (builder) {
-							_build(builder)
-						}
-
-						return propProxy
-					}
-
-					target[tagName] = tagScope
-
-					return tagScope
+					const prevNode = ctx.currentNode
+					const prevChildren = ctx.currentChildren
+					ctx.currentNode = element
+					ctx.currentChildren = children
+					builder({
+						tags,
+						text,
+						el: element,
+						on,
+						off,
+						attr: attrProxy,
+						prop: propProxy,
+						$: attrProxy,
+						$$: propProxy,
+						parent: parentNode,
+						children
+					})
+					ctx.currentNode = prevNode
+					ctx.currentChildren = prevChildren
 				}
+
+				return propProxy
 			}
-		)
 
-		return tags
-	}
+			target[tagName] = tagScope
 
-	const build = (builder) => {
-		const elementStore = createDocumentFragment()
-		const ctx = {
-			currentNode: elementStore
+			return tagScope
 		}
-		ctx.text = getTextHandler(ctx)
-		ctx.tags = getTagsProxy(ctx)
-		const { text, tags } = ctx
-		const _build = _builder => _builder({ tags, text, build: _build, _: _build, parent: elementStore })
-		const ret = _build(builder)
-		ctx.currentNode = null
+	})
+
+	const build = (builder, options) => {
+		const parentNode = ctx.currentNode
+		const parentChildren = ctx.currentChildren
+		const parent = createDocumentFragment()
+		const startAnchor = createTextNode('')
+		const endAnchor = createTextNode('')
+		const children = []
+
+		appendChild(parent, startAnchor)
+		appendChild(parent, endAnchor)
+
+		ctx.currentNode = parent
+		ctx.currentChildren = children
+
+		const detatch = () => {
+			let currentNode = startAnchor
+			while (currentNode !== endAnchor) {
+				const nextNode = currentNode.nextSibling
+				appendChild(parent, currentNode)
+				currentNode = nextNode
+			}
+			appendChild(parent, endAnchor)
+		}
+		const attach = (target) => {
+			detatch()
+			appendChild(target, startAnchor)
+			appendChild(target, parent)
+			appendChild(target, endAnchor)
+		}
+
+		const ret = builder({ tags, text, build, _: build, parent: parentNode || parent, children, attach, detatch})
+
+		if (parentNode && (!options || options.append)) attach(parentNode)
+
+		ctx.currentNode = parentNode
+		ctx.currentChildren = parentChildren
+
+		if (options) {
+			// Should I expose these?
+
+			// options.elementStore = parent
+			// options.startAnchor = startAnchor
+			// options.endAnchor = endAnchor
+			// options.children = children
+
+			options.attach = attach
+			options.detatch = detatch
+		}
+
 		return ret
 	}
 
 	return build
 }
 
-const browser = () =>
-	create({
-		createElement(tag) {
-			return document.createElement(tag)
-		},
-		createTextNode(text) {
-			return document.createTextNode(text)
-		},
-		createDocumentFragment() {
-			return document.createDocumentFragment()
-		},
-		appendChild(parent, child) {
-			parent.appendChild(child)
-		},
-		getAttr(node, attrName) {
-			node.getAttribute(attrName)
-		},
-		setAttr(node, attrName, val) {
-			node.setAttribute(attrName, val)
-		},
-		addEventListener(node, ...args) {
-			node.addEventListener(...args)
-		},
-		removeEventListener(node, ...args) {
-			node.removeEventListener(...args)
-		}
-	})
+const browser = (ctx = {}) => create({
+	createElement(tag) {
+		return document.createElement(tag)
+	},
+	createTextNode(text) {
+		return document.createTextNode(text)
+	},
+	createDocumentFragment() {
+		return document.createDocumentFragment()
+	},
+	appendChild(parent, child) {
+		return parent.appendChild(child)
+	},
+	getNextSibling(node) {
+		return node.nextSibling
+	},
+	getAttr(node, attrName) {
+		return node.getAttribute(attrName)
+	},
+	setAttr(node, attrName, val) {
+		return node.setAttribute(attrName, val)
+	},
+	addEventListener(node, ...args) {
+		return node.addEventListener(...args)
+	},
+	removeEventListener(node, ...args) {
+		return node.removeEventListener(...args)
+	}
+}, ctx)
 
 export { create, browser, reactive }
