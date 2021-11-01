@@ -56,13 +56,26 @@ const reactive = (target) => {
 const create = ({
 	createElement,
 	createTextNode,
+	createComment,
 	createDocumentFragment,
 	appendChild,
+	appendBefore,
+	getNextSibling,
 	getAttr,
 	setAttr,
 	addEventListener,
 	removeEventListener
-}, ctx = {}) => {
+}, currentNode) => {
+	let build = null
+
+	const scope = (node, builder, ...args) => {
+		const prevNode = currentNode
+		currentNode = node
+		const ret = builder(...args)
+		currentNode = prevNode
+		return ret
+	}
+
 	const getAttrProxy = (element) => {
 		const attrProxy = new Proxy(element, {
 			get(_, attrName) {
@@ -89,50 +102,99 @@ const create = ({
 	const text = (str = '') => {
 		const textNode = createTextNode(str)
 		const reactiveNode = reactive(textNode)
-		if (ctx.currentNode) appendChild(ctx.currentNode, textNode)
-		if (ctx.currentChildren) ctx.currentChildren.push(reactiveNode)
+		if (currentNode) appendChild(currentNode, textNode)
 		return reactiveNode
+	}
+
+	const comment = (str = '') => {
+		const commentNode = createComment(str)
+		const reactiveNode = reactive(commentNode)
+		if (currentNode) appendChild(currentNode, commentNode)
+		return reactiveNode
+	}
+
+	const fragment = (options) => {
+		let fragmentStartAnchor = null
+		let fragmentEndAnchor = null
+
+		build(({startAnchor, endAnchor}) => {
+			fragmentStartAnchor = startAnchor
+			fragmentEndAnchor = endAnchor
+		}, options)
+
+		const empty = () => {
+			const tempStore = createDocumentFragment()
+
+			let currentElement = getNextSibling(fragmentStartAnchor)
+			while (currentElement !== fragmentEndAnchor) {
+				const nextElement = getNextSibling(currentElement)
+				appendChild(tempStore, currentElement)
+				currentElement = nextElement
+			}
+		}
+		const append = (builder, ...args) => {
+			const tempStore = createDocumentFragment()
+			const ret = scope(tempStore, builder, ...args)
+			appendBefore(fragmentEndAnchor, tempStore)
+			return ret
+		}
+		const set = (builder) => {
+			empty()
+			return append(builder)
+		}
+
+		return {
+			empty,
+			append,
+			set
+		}
 	}
 
 	const tags = new Proxy({}, {
 		get(target, tagName) {
 			if (target[tagName]) return target[tagName]
 
-			const tagScope = (builder) => {
-				const parentNode = ctx.currentNode
-				const parentChildren = ctx.currentChildren
+			const tagScope = (builder, append = true) => {
+				const parentNode = currentNode
 				const element = createElement(tagName)
-				const attrProxy = getAttrProxy(element)
+				const elementStore = createDocumentFragment()
 				const propProxy = reactive(element)
 
-				if (parentNode) appendChild(parentNode, element)
-				if (parentChildren) parentChildren.push(propProxy)
-
 				if (builder) {
-					const children = []
+					const attrProxy = getAttrProxy(element)
 					const on = (...args) => addEventListener(element, ...args)
 					const off = (...args) => removeEventListener(element, ...args)
+					const attach = (target) => {
+						if (!target) target = currentNode
+						if (!target) return
+						appendChild(target, element)
+					}
+					const detatch = () => {
+						appendChild(elementStore, element)
+					}
 
-					const prevNode = ctx.currentNode
-					const prevChildren = ctx.currentChildren
-					ctx.currentNode = element
-					ctx.currentChildren = children
+					currentNode = element
 					builder({
 						tags,
 						text,
+						comment,
+						fragment,
+						element,
 						el: element,
 						on,
 						off,
+						attach,
+						detatch,
 						attr: attrProxy,
 						prop: propProxy,
 						$: attrProxy,
-						$$: propProxy,
-						parent: parentNode,
-						children
+						$$: propProxy
 					})
-					ctx.currentNode = prevNode
-					ctx.currentChildren = prevChildren
+					currentNode = parentNode
 				}
+
+				if (append && parentNode) appendChild(parentNode, element)
+				else appendChild(elementStore, element)
 
 				return propProxy
 			}
@@ -143,50 +205,48 @@ const create = ({
 		}
 	})
 
-	const build = (builder, options) => {
-		const parentNode = ctx.currentNode
-		const parentChildren = ctx.currentChildren
-		const parent = createDocumentFragment()
+	build = (builder, options) => {
+		const parentNode = currentNode
+		const elementStore = createDocumentFragment()
 		const startAnchor = createTextNode('')
 		const endAnchor = createTextNode('')
-		const children = []
 
-		appendChild(parent, startAnchor)
-		appendChild(parent, endAnchor)
+		appendChild(elementStore, startAnchor)
+		appendChild(elementStore, endAnchor)
 
-		ctx.currentNode = parent
-		ctx.currentChildren = children
+		currentNode = elementStore
 
 		const detatch = () => {
-			let currentNode = startAnchor
-			while (currentNode !== endAnchor) {
-				const nextNode = currentNode.nextSibling
-				appendChild(parent, currentNode)
-				currentNode = nextNode
+			let currentElement = startAnchor
+			while (currentElement !== endAnchor) {
+				const nextElement = getNextSibling(currentElement)
+				appendChild(elementStore, currentElement)
+				currentElement = nextElement
 			}
-			appendChild(parent, endAnchor)
+			appendChild(elementStore, endAnchor)
 		}
 		const attach = (target) => {
+			if (!target) target = currentNode
+			if (!target) return
+
 			detatch()
 			appendChild(target, startAnchor)
-			appendChild(target, parent)
+			appendChild(target, elementStore)
 			appendChild(target, endAnchor)
 		}
 
-		const ret = builder({ tags, text, build, _: build, parent: parentNode || parent, children, attach, detatch})
+		const ret = builder({ tags, text, comment, fragment, build, attach, detatch, startAnchor, endAnchor})
 
 		if (parentNode && (!options || options.append)) attach(parentNode)
 
-		ctx.currentNode = parentNode
-		ctx.currentChildren = parentChildren
+		currentNode = parentNode
 
 		if (options) {
 			// Should I expose these?
 
-			// options.elementStore = parent
+			// options.elementStore = elementStore
 			// options.startAnchor = startAnchor
 			// options.endAnchor = endAnchor
-			// options.children = children
 
 			options.attach = attach
 			options.detatch = detatch
@@ -195,21 +255,27 @@ const create = ({
 		return ret
 	}
 
-	return build
+	return {build, text, comment, tags, fragment, scope}
 }
 
-const browser = (ctx = {}) => create({
+const browser = currentNode => create({
 	createElement(tag) {
 		return document.createElement(tag)
 	},
 	createTextNode(text) {
 		return document.createTextNode(text)
 	},
+	createComment(text) {
+		return document.createComment(text)
+	},
 	createDocumentFragment() {
 		return document.createDocumentFragment()
 	},
 	appendChild(parent, child) {
 		return parent.appendChild(child)
+	},
+	appendBefore(node, element) {
+		return node.parentNode.insertBefore(element, node)
 	},
 	getNextSibling(node) {
 		return node.nextSibling
@@ -226,6 +292,6 @@ const browser = (ctx = {}) => create({
 	removeEventListener(node, ...args) {
 		return node.removeEventListener(...args)
 	}
-}, ctx)
+}, currentNode)
 
 export { create, browser, reactive }
