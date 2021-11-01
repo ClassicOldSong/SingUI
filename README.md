@@ -10,6 +10,9 @@ The next-gen, no compile/transpile needed, self-contained JS UI library
 
 ```html
 <script type="text/javascript" src="cdn/to/singui.js"></script>
+<script>
+	const {browser} = singui
+</script>
 ```
 
 or
@@ -27,7 +30,7 @@ const {browser} = require('singui')
 then
 
 ```javascript
-const build = browser()
+const {build} = browser()
 
 const app = ({tags, text, parent}) => {
 	const {h1, center, p} = tags
