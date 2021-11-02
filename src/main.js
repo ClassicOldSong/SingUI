@@ -53,6 +53,14 @@ const reactive = (target) => {
 	return propProxy
 }
 
+const camelToKebab = (str) => {
+	return [...str].map((i) => {
+		const lowerCaseLetter = i.toLowerCase()
+		if (i === lowerCaseLetter) return i
+		return `-${lowerCaseLetter}`
+	}).join('')
+}
+
 const create = ({
 	createElement,
 	createTextNode,
@@ -80,7 +88,7 @@ const create = ({
 		const attrProxy = new Proxy(element, {
 			get(_, attrName) {
 				if (attrName[0] === '$') {
-					const realAttrName = attrName.substring(1)
+					const realAttrName = camelToKebab(attrName.substring(1))
 					return (val) => {
 						if (!val) return getAttr(_, realAttrName)
 						attrProxy[attrName] = val
@@ -90,7 +98,7 @@ const create = ({
 			},
 			set(_, attrName, val) {
 				if (attrName[0] === '$') attrName = attrName.substring(1)
-				setAttr(_, attrName, val)
+				setAttr(_, camelToKebab(attrName), val)
 				return true
 			}
 		})
@@ -113,14 +121,18 @@ const create = ({
 		return reactiveNode
 	}
 
-	const fragment = (options) => {
+	const fragment = (mamager) => {
+		let attachFragment = null
+		let detatchFragment = null
 		let fragmentStartAnchor = null
 		let fragmentEndAnchor = null
 
-		build(({startAnchor, endAnchor}) => {
+		build(({attach, detatch, startAnchor, endAnchor}) => {
+			attachFragment = attach
+			detatchFragment = detatch
 			fragmentStartAnchor = startAnchor
 			fragmentEndAnchor = endAnchor
-		}, options)
+		}, mamager)
 
 		const empty = () => {
 			const tempStore = createDocumentFragment()
@@ -146,7 +158,9 @@ const create = ({
 		return {
 			empty,
 			append,
-			set
+			set,
+			attach: attachFragment,
+			detatch: detatchFragment
 		}
 	}
 
@@ -154,9 +168,11 @@ const create = ({
 		get(target, tagName) {
 			if (target[tagName]) return target[tagName]
 
+			const kebabTagName = camelToKebab(tagName)
+
 			const tagScope = (builder, append = true) => {
 				const parentNode = currentNode
-				const element = createElement(tagName)
+				const element = createElement(kebabTagName)
 				const elementStore = createDocumentFragment()
 				const propProxy = reactive(element)
 
@@ -205,7 +221,7 @@ const create = ({
 		}
 	})
 
-	build = (builder, options) => {
+	build = (builder, mamager) => {
 		const parentNode = currentNode
 		const elementStore = createDocumentFragment()
 		const startAnchor = createTextNode('')
@@ -237,19 +253,19 @@ const create = ({
 
 		const ret = builder({ tags, text, comment, fragment, build, attach, detatch, startAnchor, endAnchor})
 
-		if (parentNode && (!options || options.append)) attach(parentNode)
+		if (parentNode && (!mamager || mamager.append)) attach(parentNode)
 
 		currentNode = parentNode
 
-		if (options) {
+		if (mamager) {
 			// Should I expose these?
 
-			// options.elementStore = elementStore
-			// options.startAnchor = startAnchor
-			// options.endAnchor = endAnchor
+			// mamager.elementStore = elementStore
+			// mamager.startAnchor = startAnchor
+			// mamager.endAnchor = endAnchor
 
-			options.attach = attach
-			options.detatch = detatch
+			mamager.attach = attach
+			mamager.detatch = detatch
 		}
 
 		return ret
@@ -257,6 +273,8 @@ const create = ({
 
 	return {build, text, comment, tags, fragment, scope}
 }
+
+let globalCtx = null
 
 const browser = currentNode => create({
 	createElement(tag) {
@@ -294,4 +312,14 @@ const browser = currentNode => create({
 	}
 }, currentNode)
 
-export { create, browser, reactive }
+const build = (...args) => globalCtx.build(...args)
+const scope = (...args) => globalCtx.scope(...args)
+const fragment = (...args) => globalCtx.fragment(...args)
+
+const setGlobalCtx = (ctx) => {
+	globalCtx = ctx
+}
+
+const getGlobalCtx = () => globalCtx
+
+export { create, browser, reactive, build, scope, fragment, setGlobalCtx, getGlobalCtx }
