@@ -1,4 +1,3 @@
-import buble from '@rollup/plugin-buble'
 import {terser} from 'rollup-plugin-terser'
 
 export default {
@@ -9,7 +8,6 @@ export default {
 		format: 'umd'
 	},
 	plugins: [
-		buble(),
 		terser()
 	]
 };
