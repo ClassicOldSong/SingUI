@@ -32,29 +32,29 @@ then
 ```javascript
 const {build} = browser()
 
-const app = ({tags, text, parent}) => {
+const app = () => build(({tags, text, attach, attr, prop}) => {
 	const {h1, center, p} = tags
 
 	center(() => {
-		h1(({$}) => {
-			$.style = 'font-weight: 300'
+		h1(() => {
+			attr.style = 'font-weight: 300'
 			text('Hello World!')
 		})
 	})
 
-	p(({$$}) => {
-		const style = $$.style
+	p(() => {
+		const style = prop.style
 		style.color = 'green'
 		style.textAlign = 'center'
 		text('Welcome to SingUI')
 	})
 
-	return parent
-}
+	return attach
+})
 
-const myApp = build(app)
+const myApp = app()
 
-document.body.appendChild(myApp)
+myApp(document.body)
 ```
 More details please see [Try it out](https://stackblitz.com/edit/singui-demo?file=index.js)
 
