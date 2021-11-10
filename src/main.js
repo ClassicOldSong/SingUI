@@ -1,67 +1,43 @@
-const dummyFn = (_, val) => val
+const dummyFn = _ => _
 
-const reactive = (target) => {
-	if (Object(target) !== target) return target
+const reactive = (_target) => {
+	const targetObj = Object(_target)
+	if (targetObj !== _target) return _target
 
-	const setHandlerStore = {}
-	const getHandlerStore = {}
-
-	const propProxy = new Proxy(Object(target), {
+	const propProxy = new Proxy(Object(targetObj), {
 		get(target, propName) {
 			if (propName[0] === '$') {
 				const realPropName = propName.substring(1)
 				return (handler = dummyFn) =>
 					(val) => {
-						propProxy[realPropName] = handler(propName, val, propProxy[realPropName])
+						propProxy[realPropName] = handler(val, propProxy[realPropName], realPropName)
 					}
 			}
 
 			if (propName[0] === '_') {
 				const realPropName = propName.substring(1)
-				const getter = getHandlerStore[realPropName] || (() => target[realPropName])
-				return (handler = () => reactive(getter())) =>
-					() =>
-						handler(realPropName, propProxy)
+				return (handler = () => reactive(target[propName])) => () => handler(realPropName, propProxy)
 			}
 
-			const getter = getHandlerStore[propName] || (() => target[propName])
-			return reactive(getter())
+			return reactive(target[propName])
 		},
 		set(target, propName, val) {
-			if (propName[0] === '$') {
-				const realPpropName = propName.substring(1)
-				setHandlerStore[realPpropName] = val
-				return true
-			}
-
-			if (propName[0] === '_') {
-				const realPpropName = propName.substring(1)
-				getHandlerStore[realPpropName] = val
-				return true
-			}
-
-			if (setHandlerStore[propName]) target[propName] = setHandlerStore[propName](propName, val, target[propName])
-			else target[propName] = val
-
+			if (propName[0] === '$' || propName[0] === '_') propName = propName.substring(1)
+			target[propName] = val
 			return true
-		},
-		apply(target, thisArg, argList) {
-			return target.call(thisArg, ...argList)
 		}
 	})
 
 	return propProxy
 }
 
-const camelToKebab = (str) => {
-	return [...str].map((i) => {
-		const lowerCaseLetter = i.toLowerCase()
-		if (i === lowerCaseLetter) return i
-		return `-${lowerCaseLetter}`
-	}).join('')
-}
+const camelToKebab = str => [...str].map((i) => {
+	const lowerCaseLetter = i.toLowerCase()
+	if (i === lowerCaseLetter) return i
+	return `-${lowerCaseLetter}`
+}).join('')
 
-const create = ({
+const env = ({
 	createElement,
 	createTextNode,
 	createComment,
@@ -84,28 +60,71 @@ const create = ({
 		return ret
 	}
 
-	const getAttrProxy = (element) => {
-		const attrProxy = new Proxy(element, {
-			get(_, attrName) {
-				if (attrName[0] === '$') {
-					const realAttrName = camelToKebab(attrName.substring(1))
+	const attr = new Proxy({}, {
+		get(_, attrName) {
+			const element = currentNode
+			if (attrName[0] === '$') {
+				const realAttrName = camelToKebab(attrName.substring(1))
+				return (handler) => {
+					if (handler) return (val) => {
+						setAttr(element, realAttrName, handler(val, getAttr(element, realAttrName), realAttrName))
+					}
+
 					return (val) => {
-						if (!val) return getAttr(_, realAttrName)
-						attrProxy[attrName] = val
+						setAttr(element, realAttrName, val)
 					}
 				}
-				return getAttr(_, attrName)
-			},
-			set(_, attrName, val) {
-				if (attrName[0] === '$') attrName = attrName.substring(1)
-				setAttr(_, camelToKebab(attrName), val)
-				return true
 			}
-		})
 
-		return attrProxy
-	}
+			if (attrName[0] === '_') {
+				const realAttrName = camelToKebab(attrName.substring(1))
+				return (handler) => {
+					if (handler) return () => handler(realAttrName, element)
+					return () => getAttr(element, realAttrName)
+				}
+			}
 
+			return getAttr(element, camelToKebab(attrName))
+		},
+		set(_, attrName, val) {
+			if (attrName[0] === '$' || attrName[0] === '_') attrName = attrName.substring(1)
+			setAttr(currentNode, camelToKebab(attrName), val)
+			return true
+		}
+	})
+
+	const prop = new Proxy({}, {
+		get(_, propName) {
+			const element = currentNode
+			if (propName[0] === '$') {
+				const realPropName = propName.substring(1)
+				return (handler) => {
+					if (handler) return (val) => {
+						element[realPropName] = handler(val, element[realPropName], realPropName)
+					}
+
+					return (val) => {
+						element[realPropName] = val
+					}
+				}
+			}
+
+			if (propName[0] === '_') {
+				const realPropName = propName.substring(1)
+				return (handler) => {
+					if (handler) return () => handler(realPropName, element)
+					return () => element[realPropName]
+				}
+			}
+
+			return reactive(element[propName])
+		},
+		set(_, propName, val) {
+			if (propName[0] === '$' || propName[0] === '_') propName = propName.substring(1)
+			currentNode[propName] = val
+			return true
+		}
+	})
 
 	const text = (str = '') => {
 		const textNode = createTextNode(str)
@@ -122,47 +141,38 @@ const create = ({
 	}
 
 	const fragment = (mamager) => {
-		let attachFragment = null
-		let detatchFragment = null
-		let fragmentStartAnchor = null
-		let fragmentEndAnchor = null
+		const ret = {}
 
 		build(({attach, detatch, startAnchor, endAnchor}) => {
-			attachFragment = attach
-			detatchFragment = detatch
-			fragmentStartAnchor = startAnchor
-			fragmentEndAnchor = endAnchor
+			ret.attach = attach
+			ret.detatch = detatch
+			ret.empty = () => {
+				const tempStore = createDocumentFragment()
+
+				let currentElement = getNextSibling(startAnchor)
+				while (currentElement !== endAnchor) {
+					const nextElement = getNextSibling(currentElement)
+					appendChild(tempStore, currentElement)
+					currentElement = nextElement
+				}
+			}
+			ret.append = (builder, ...args) => {
+				const tempStore = createDocumentFragment()
+				const ret = scope(tempStore, builder, ...args)
+				appendBefore(endAnchor, tempStore)
+				return ret
+			}
+			ret.set = (builder) => {
+				ret.empty()
+				return ret.append(builder)
+			}
 		}, mamager)
 
-		const empty = () => {
-			const tempStore = createDocumentFragment()
-
-			let currentElement = getNextSibling(fragmentStartAnchor)
-			while (currentElement !== fragmentEndAnchor) {
-				const nextElement = getNextSibling(currentElement)
-				appendChild(tempStore, currentElement)
-				currentElement = nextElement
-			}
-		}
-		const append = (builder, ...args) => {
-			const tempStore = createDocumentFragment()
-			const ret = scope(tempStore, builder, ...args)
-			appendBefore(fragmentEndAnchor, tempStore)
-			return ret
-		}
-		const set = (builder) => {
-			empty()
-			return append(builder)
-		}
-
-		return {
-			empty,
-			append,
-			set,
-			attach: attachFragment,
-			detatch: detatchFragment
-		}
+		return ret
 	}
+
+	const on = (...args) => addEventListener(currentNode, ...args)
+	const off = (...args) => removeEventListener(currentNode, ...args)
 
 	const tags = new Proxy({}, {
 		get(target, tagName) {
@@ -174,21 +184,17 @@ const create = ({
 				const parentNode = currentNode
 				const element = createElement(kebabTagName)
 				const elementStore = createDocumentFragment()
-				const propProxy = reactive(element)
+
+				const attach = (target) => {
+					if (!target) target = currentNode
+					if (!target) return
+					appendChild(target, element)
+				}
+				const detatch = () => {
+					appendChild(elementStore, element)
+				}
 
 				if (builder) {
-					const attrProxy = getAttrProxy(element)
-					const on = (...args) => addEventListener(element, ...args)
-					const off = (...args) => removeEventListener(element, ...args)
-					const attach = (target) => {
-						if (!target) target = currentNode
-						if (!target) return
-						appendChild(target, element)
-					}
-					const detatch = () => {
-						appendChild(elementStore, element)
-					}
-
 					currentNode = element
 					builder({
 						tags,
@@ -201,10 +207,10 @@ const create = ({
 						off,
 						attach,
 						detatch,
-						attr: attrProxy,
-						prop: propProxy,
-						$: attrProxy,
-						$$: propProxy
+						attr,
+						prop,
+						$: attr,
+						$$: prop
 					})
 					currentNode = parentNode
 				}
@@ -212,7 +218,7 @@ const create = ({
 				if (append && parentNode) appendChild(parentNode, element)
 				else appendChild(elementStore, element)
 
-				return propProxy
+				return [attach, detatch]
 			}
 
 			target[tagName] = tagScope
@@ -251,7 +257,7 @@ const create = ({
 			appendChild(target, endAnchor)
 		}
 
-		const ret = builder({ tags, text, comment, fragment, build, attach, detatch, startAnchor, endAnchor})
+		const ret = builder({tags, text, comment, fragment, build, scope, attr, prop, $: attr, $$: prop, on, off, attach, detatch, startAnchor, endAnchor})
 
 		if (parentNode && (!mamager || mamager.append)) attach(parentNode)
 
@@ -271,12 +277,12 @@ const create = ({
 		return ret
 	}
 
-	return {build, text, comment, tags, fragment, scope}
+	return {build, text, comment, tags, fragment, scope, on, off, attr, prop}
 }
 
 let globalCtx = null
 
-const browser = currentNode => create({
+const browser = currentNode => env({
 	createElement(tag) {
 		return document.createElement(tag)
 	},
@@ -315,6 +321,8 @@ const browser = currentNode => create({
 const build = (...args) => globalCtx.build(...args)
 const scope = (...args) => globalCtx.scope(...args)
 const fragment = (...args) => globalCtx.fragment(...args)
+const on = (...args) => globalCtx.on(...args)
+const off = (...args) => globalCtx.off(...args)
 
 const setGlobalCtx = (ctx) => {
 	globalCtx = ctx
@@ -322,4 +330,4 @@ const setGlobalCtx = (ctx) => {
 
 const getGlobalCtx = () => globalCtx
 
-export { create, browser, reactive, build, scope, fragment, setGlobalCtx, getGlobalCtx }
+export { env, browser, reactive, build, scope, fragment, on, off, setGlobalCtx, getGlobalCtx }
