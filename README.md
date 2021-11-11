@@ -9,7 +9,7 @@ The next-gen, no compile/transpile needed, self-contained JS UI library
 ### Browser
 
 ```html
-<script type="text/javascript" src="cdn/to/singui.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/singui@0.1.3-alpha.1/dist/main.min.js"></script>
 <script>
 	const {browser} = singui
 </script>
@@ -32,29 +32,29 @@ then
 ```javascript
 const {build} = browser()
 
-const app = ({tags, text, parent}) => {
+const app = () => build(({tags, text, attach, attr, prop}) => {
 	const {h1, center, p} = tags
 
 	center(() => {
-		h1(({$}) => {
-			$.style = 'font-weight: 300'
+		h1(() => {
+			attr.style = 'font-weight: 300'
 			text('Hello World!')
 		})
 	})
 
-	p(({$$}) => {
-		const style = $$.style
+	p(() => {
+		const style = prop.style
 		style.color = 'green'
 		style.textAlign = 'center'
 		text('Welcome to SingUI')
 	})
 
-	return parent
-}
+	return attach
+})
 
-const myApp = build(app)
+const myApp = app()
 
-document.body.appendChild(myApp)
+myApp(document.body)
 ```
 More details please see [Try it out](https://stackblitz.com/edit/singui-demo?file=index.js)
 
