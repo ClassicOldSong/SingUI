@@ -9,7 +9,7 @@ The next-gen, no compile/transpile needed, self-contained JS UI library
 ### Browser
 
 ```html
-<script type="text/javascript" src="cdn/to/singui.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/singui@0.1.3-alpha.1/dist/main.min.js"></script>
 <script>
 	const {browser} = singui
 </script>
