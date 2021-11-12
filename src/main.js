@@ -42,6 +42,7 @@ const env = ({
 	createTextNode,
 	createComment,
 	createDocumentFragment,
+	cloneElement,
 	appendChild,
 	appendBefore,
 	appendAfter,
@@ -52,6 +53,7 @@ const env = ({
 	removeEventListener
 }, currentNode) => {
 	let build = null
+	let tags = null
 
 	const scope = (node, builder) => {
 		const prevNode = currentNode
@@ -177,65 +179,77 @@ const env = ({
 	const on = (...args) => addEventListener(currentNode, ...args)
 	const off = (...args) => removeEventListener(currentNode, ...args)
 
-	const tags = new Proxy({}, {
+	const adopt = (rawElement, clone) => (builder, append = true) => {
+		if (!rawElement) return
+
+		const element = clone ? cloneElement(rawElement) : rawElement
+		const parentNode = currentNode
+		const elementStore = createDocumentFragment()
+
+		const attach = (target) => {
+			if (!target) target = currentNode
+			if (!target) return
+			appendChild(target, element)
+		}
+		const detatch = () => {
+			appendChild(elementStore, element)
+		}
+		const before = (builder) => {
+			const tempStore = createDocumentFragment()
+			const ret = scope(tempStore, builder)
+			appendBefore(element, tempStore)
+			return ret
+		}
+		const after = (builder) => {
+			const tempStore = createDocumentFragment()
+			const ret = scope(tempStore, builder)
+			appendAfter(element, tempStore)
+			return ret
+		}
+
+		if (builder) {
+			currentNode = element
+			builder({
+				build,
+				adopt,
+				text,
+				comment,
+				fragment,
+				scope,
+				element,
+				on,
+				off,
+				tags,
+				attr,
+				prop,
+				attach,
+				detatch,
+				before,
+				after,
+				$: attr,
+				$$: prop,
+				el: element
+			})
+			currentNode = parentNode
+		}
+
+		if (append && parentNode) appendChild(parentNode, element)
+		else appendChild(elementStore, element)
+
+		if (!clone) rawElement = null
+
+		return {attach, detatch, before, after}
+	}
+
+	tags = new Proxy({}, {
 		get(target, tagName) {
 			if (target[tagName]) return target[tagName]
 
 			const kebabTagName = camelToKebab(tagName)
 
-			const tagScope = (builder, append = true) => {
-				const parentNode = currentNode
+			const tagScope = (builder, append) => {
 				const element = createElement(kebabTagName)
-				const elementStore = createDocumentFragment()
-
-				const attach = (target) => {
-					if (!target) target = currentNode
-					if (!target) return
-					appendChild(target, element)
-				}
-				const detatch = () => {
-					appendChild(elementStore, element)
-				}
-				const before = (builder) => {
-					const tempStore = createDocumentFragment()
-					const ret = scope(tempStore, builder)
-					appendBefore(element, tempStore)
-					return ret
-				}
-				const after = (builder) => {
-					const tempStore = createDocumentFragment()
-					const ret = scope(tempStore, builder)
-					appendAfter(element, tempStore)
-					return ret
-				}
-
-				if (builder) {
-					currentNode = element
-					builder({
-						tags,
-						text,
-						comment,
-						fragment,
-						element,
-						el: element,
-						on,
-						off,
-						attach,
-						detatch,
-						before,
-						after,
-						attr,
-						prop,
-						$: attr,
-						$$: prop
-					})
-					currentNode = parentNode
-				}
-
-				if (append && parentNode) appendChild(parentNode, element)
-				else appendChild(elementStore, element)
-
-				return {attach, detatch, before, after}
+				return adopt(element, false)(builder, append)
 			}
 
 			target[tagName] = tagScope
@@ -286,19 +300,33 @@ const env = ({
 			return ret
 		}
 
-		const ret = builder({tags, text, comment, fragment, build, scope, attr, prop, $: attr, $$: prop, on, off, attach, detatch, before, after, startAnchor, endAnchor})
+		const ret = builder({
+			build,
+			adopt,
+			text,
+			comment,
+			fragment,
+			scope,
+			on,
+			off,
+			tags,
+			attr,
+			prop,
+			attach,
+			detatch,
+			before,
+			after,
+			startAnchor,
+			endAnchor,
+			$: attr,
+			$$: prop
+		})
 
 		if (parentNode && autoAppend) attach(parentNode)
 
 		currentNode = parentNode
 
 		if (mamager) {
-			// Should I expose these?
-
-			// mamager.elementStore = elementStore
-			// mamager.startAnchor = startAnchor
-			// mamager.endAnchor = endAnchor
-
 			mamager.attach = attach
 			mamager.detatch = detatch
 		}
@@ -306,7 +334,7 @@ const env = ({
 		return ret
 	}
 
-	return {build, text, comment, tags, fragment, scope, on, off, attr, prop}
+	return {build, adopt, text, comment, fragment, scope, on, off, tags, attr, prop}
 }
 
 let globalCtx = null
@@ -323,6 +351,9 @@ const browser = currentNode => env({
 	},
 	createDocumentFragment() {
 		return document.createDocumentFragment()
+	},
+	cloneElement(element) {
+		return element.cloneNode(true)
 	},
 	appendChild(parent, child) {
 		return parent.appendChild(child)
@@ -355,6 +386,7 @@ const scope = (...args) => globalCtx.scope(...args)
 const fragment = (...args) => globalCtx.fragment(...args)
 const on = (...args) => globalCtx.on(...args)
 const off = (...args) => globalCtx.off(...args)
+const adopt = (...args) => globalCtx.adopt(...args)
 
 const setGlobalCtx = (ctx) => {
 	globalCtx = ctx
@@ -362,4 +394,4 @@ const setGlobalCtx = (ctx) => {
 
 const getGlobalCtx = () => globalCtx
 
-export { env, browser, reactive, build, scope, fragment, on, off, setGlobalCtx, getGlobalCtx }
+export {env, browser, reactive, build, adopt, fragment, scope, on, off, setGlobalCtx, getGlobalCtx}
