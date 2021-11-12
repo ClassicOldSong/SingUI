@@ -44,6 +44,7 @@ const env = ({
 	createDocumentFragment,
 	appendChild,
 	appendBefore,
+	appendAfter,
 	getNextSibling,
 	getAttr,
 	setAttr,
@@ -52,10 +53,10 @@ const env = ({
 }, currentNode) => {
 	let build = null
 
-	const scope = (node, builder, ...args) => {
+	const scope = (node, builder) => {
 		const prevNode = currentNode
 		currentNode = node
-		const ret = builder(...args)
+		const ret = builder()
 		currentNode = prevNode
 		return ret
 	}
@@ -143,9 +144,11 @@ const env = ({
 	const fragment = (mamager) => {
 		const ret = {}
 
-		build(({attach, detatch, startAnchor, endAnchor}) => {
+		build(({attach, detatch, before, after, startAnchor, endAnchor}) => {
 			ret.attach = attach
 			ret.detatch = detatch
+			ret.before = before
+			ret.after = after
 			ret.empty = () => {
 				const tempStore = createDocumentFragment()
 
@@ -156,9 +159,9 @@ const env = ({
 					currentElement = nextElement
 				}
 			}
-			ret.append = (builder, ...args) => {
+			ret.append = (builder) => {
 				const tempStore = createDocumentFragment()
-				const ret = scope(tempStore, builder, ...args)
+				const ret = scope(tempStore, builder)
 				appendBefore(endAnchor, tempStore)
 				return ret
 			}
@@ -193,6 +196,18 @@ const env = ({
 				const detatch = () => {
 					appendChild(elementStore, element)
 				}
+				const before = (builder) => {
+					const tempStore = createDocumentFragment()
+					const ret = scope(tempStore, builder)
+					appendBefore(element, tempStore)
+					return ret
+				}
+				const after = (builder) => {
+					const tempStore = createDocumentFragment()
+					const ret = scope(tempStore, builder)
+					appendAfter(element, tempStore)
+					return ret
+				}
 
 				if (builder) {
 					currentNode = element
@@ -207,6 +222,8 @@ const env = ({
 						off,
 						attach,
 						detatch,
+						before,
+						after,
 						attr,
 						prop,
 						$: attr,
@@ -218,7 +235,7 @@ const env = ({
 				if (append && parentNode) appendChild(parentNode, element)
 				else appendChild(elementStore, element)
 
-				return [attach, detatch]
+				return {attach, detatch, before, after}
 			}
 
 			target[tagName] = tagScope
@@ -227,7 +244,7 @@ const env = ({
 		}
 	})
 
-	build = (builder, mamager) => {
+	build = (builder, autoAppend = true, mamager) => {
 		const parentNode = currentNode
 		const elementStore = createDocumentFragment()
 		const startAnchor = createTextNode('')
@@ -256,10 +273,22 @@ const env = ({
 			appendChild(target, elementStore)
 			appendChild(target, endAnchor)
 		}
+		const before = (builder) => {
+			const tempStore = createDocumentFragment()
+			const ret = scope(tempStore, builder)
+			appendBefore(startAnchor, tempStore)
+			return ret
+		}
+		const after = (builder) => {
+			const tempStore = createDocumentFragment()
+			const ret = scope(tempStore, builder)
+			appendAfter(endAnchor, tempStore)
+			return ret
+		}
 
-		const ret = builder({tags, text, comment, fragment, build, scope, attr, prop, $: attr, $$: prop, on, off, attach, detatch, startAnchor, endAnchor})
+		const ret = builder({tags, text, comment, fragment, build, scope, attr, prop, $: attr, $$: prop, on, off, attach, detatch, before, after, startAnchor, endAnchor})
 
-		if (parentNode && (!mamager || mamager.append)) attach(parentNode)
+		if (parentNode && autoAppend) attach(parentNode)
 
 		currentNode = parentNode
 
@@ -300,6 +329,9 @@ const browser = currentNode => env({
 	},
 	appendBefore(node, element) {
 		return node.parentNode.insertBefore(element, node)
+	},
+	appendAfter(node, element) {
+		return node.parentNode.insertBefore(element, node.nextSibling)
 	},
 	getNextSibling(node) {
 		return node.nextSibling
