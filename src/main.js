@@ -179,7 +179,38 @@ const env = ({
 	const on = (...args) => addEventListener(currentNode, ...args)
 	const off = (...args) => removeEventListener(currentNode, ...args)
 
+	const useTags = () => tags
 	const useElement = () => currentNode
+	const useAttr = () => {
+		const element = currentNode
+		return new Proxy({}, {
+			get(_, attrName) {
+				return scope(element, () => attr[attrName])
+			},
+			set(_, attrName, val) {
+				scope(element, () => {
+					attr[attrName] = val
+				})
+
+				return true
+			}
+		})
+	}
+	const useProp = () => {
+		const element = currentNode
+		return new Proxy({}, {
+			get(_, attrName) {
+				return scope(element, () => prop[attrName])
+			},
+			set(_, attrName, val) {
+				scope(element, () => {
+					prop[attrName] = val
+				})
+
+				return true
+			}
+		})
+	}
 
 	const adopt = (rawElement, clone) => (builder, append = true) => {
 		if (!rawElement) return
@@ -221,7 +252,10 @@ const env = ({
 				element,
 				on,
 				off,
+				useTags,
 				useElement,
+				useAttr,
+				useProp,
 				tags,
 				attr,
 				prop,
@@ -312,7 +346,10 @@ const env = ({
 			scope,
 			on,
 			off,
+			useTags,
 			useElement,
+			useAttr,
+			useProp,
 			tags,
 			attr,
 			prop,
@@ -338,7 +375,7 @@ const env = ({
 		return ret
 	}
 
-	return {build, adopt, text, comment, fragment, scope, on, off, useElement, tags, attr, prop}
+	return {build, adopt, text, comment, fragment, scope, on, off, useTags, useElement, useAttr, useProp, tags, attr, prop}
 }
 
 let globalCtx = null
@@ -393,10 +430,10 @@ const fragment = (...args) => globalCtx.fragment(...args)
 const scope = (...args) => globalCtx.scope(...args)
 const on = (...args) => globalCtx.on(...args)
 const off = (...args) => globalCtx.off(...args)
+const useTags = () => globalCtx.useTags()
 const useElement = () => globalCtx.useElement()
-const useTags = () => globalCtx.tags
-const useAttr = () => globalCtx.attr
-const useProp = () => globalCtx.prop
+const useAttr = () => globalCtx.useAttr()
+const useProp = () => globalCtx.useProp()
 
 const setGlobalCtx = (ctx) => {
 	globalCtx = ctx
