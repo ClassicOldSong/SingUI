@@ -179,6 +179,39 @@ const env = ({
 	const on = (...args) => addEventListener(currentNode, ...args)
 	const off = (...args) => removeEventListener(currentNode, ...args)
 
+	const useTags = () => tags
+	const useElement = () => currentNode
+	const useAttr = () => {
+		const element = currentNode
+		return new Proxy({}, {
+			get(_, attrName) {
+				return scope(element, () => attr[attrName])
+			},
+			set(_, attrName, val) {
+				scope(element, () => {
+					attr[attrName] = val
+				})
+
+				return true
+			}
+		})
+	}
+	const useProp = () => {
+		const element = currentNode
+		return new Proxy({}, {
+			get(_, attrName) {
+				return scope(element, () => prop[attrName])
+			},
+			set(_, attrName, val) {
+				scope(element, () => {
+					prop[attrName] = val
+				})
+
+				return true
+			}
+		})
+	}
+
 	const adopt = (rawElement, clone) => (builder, append = true) => {
 		if (!rawElement) return
 
@@ -219,6 +252,10 @@ const env = ({
 				element,
 				on,
 				off,
+				useTags,
+				useElement,
+				useAttr,
+				useProp,
 				tags,
 				attr,
 				prop,
@@ -309,6 +346,10 @@ const env = ({
 			scope,
 			on,
 			off,
+			useTags,
+			useElement,
+			useAttr,
+			useProp,
 			tags,
 			attr,
 			prop,
@@ -334,7 +375,7 @@ const env = ({
 		return ret
 	}
 
-	return {build, adopt, text, comment, fragment, scope, on, off, tags, attr, prop}
+	return {build, adopt, text, comment, fragment, scope, on, off, useTags, useElement, useAttr, useProp, tags, attr, prop}
 }
 
 let globalCtx = null
@@ -382,11 +423,17 @@ const browser = currentNode => env({
 }, currentNode)
 
 const build = (...args) => globalCtx.build(...args)
-const scope = (...args) => globalCtx.scope(...args)
+const adopt = (...args) => globalCtx.adopt(...args)
+const text = (...args) => globalCtx.text(...args)
+const comment = (...args) => globalCtx.comment(...args)
 const fragment = (...args) => globalCtx.fragment(...args)
+const scope = (...args) => globalCtx.scope(...args)
 const on = (...args) => globalCtx.on(...args)
 const off = (...args) => globalCtx.off(...args)
-const adopt = (...args) => globalCtx.adopt(...args)
+const useTags = () => globalCtx.useTags()
+const useElement = () => globalCtx.useElement()
+const useAttr = () => globalCtx.useAttr()
+const useProp = () => globalCtx.useProp()
 
 const setGlobalCtx = (ctx) => {
 	globalCtx = ctx
@@ -394,4 +441,4 @@ const setGlobalCtx = (ctx) => {
 
 const getGlobalCtx = () => globalCtx
 
-export {env, browser, reactive, build, adopt, fragment, scope, on, off, setGlobalCtx, getGlobalCtx}
+export {env, browser, reactive, build, adopt, text, comment, fragment, scope, on, off, useElement, useTags, useAttr, useProp, setGlobalCtx, getGlobalCtx}
