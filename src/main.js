@@ -434,6 +434,29 @@ const useTags = () => globalCtx.useTags()
 const useElement = () => globalCtx.useElement()
 const useAttr = () => globalCtx.useAttr()
 const useProp = () => globalCtx.useProp()
+const tags = new Proxy({}, {
+	get(_, tagName) {
+		return (...args) => globalCtx.tags[tagName](...args)
+	}
+})
+const attr = new Proxy({}, {
+	get(_, attrName) {
+		return globalCtx.attr[attrName]
+	},
+	set(_, attrName, val) {
+		globalCtx.attr[attrName] = val
+		return true
+	}
+})
+const prop = new Proxy({}, {
+	get(_, propName) {
+		return globalCtx.prop[propName]
+	},
+	set(_, propName, val) {
+		globalCtx.prop[propName] = val
+		return true
+	}
+})
 
 const setGlobalCtx = (ctx) => {
 	globalCtx = ctx
@@ -441,4 +464,4 @@ const setGlobalCtx = (ctx) => {
 
 const getGlobalCtx = () => globalCtx
 
-export {env, browser, reactive, build, adopt, text, comment, fragment, scope, on, off, useElement, useTags, useAttr, useProp, setGlobalCtx, getGlobalCtx}
+export {env, browser, reactive, build, adopt, text, comment, fragment, scope, on, off, useElement, useTags, useAttr, useProp, tags, attr, prop, setGlobalCtx, getGlobalCtx}
