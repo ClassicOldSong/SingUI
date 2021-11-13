@@ -386,11 +386,13 @@ const browser = currentNode => env({
 }, currentNode)
 
 const build = (...args) => globalCtx.build(...args)
-const scope = (...args) => globalCtx.scope(...args)
+const adopt = (...args) => globalCtx.adopt(...args)
+const text = (...args) => globalCtx.text(...args)
+const comment = (...args) => globalCtx.comment(...args)
 const fragment = (...args) => globalCtx.fragment(...args)
+const scope = (...args) => globalCtx.scope(...args)
 const on = (...args) => globalCtx.on(...args)
 const off = (...args) => globalCtx.off(...args)
-const adopt = (...args) => globalCtx.adopt(...args)
 const useElement = () => globalCtx.useElement()
 const useTags = () => globalCtx.tags
 const useAttr = () => globalCtx.attr
@@ -402,4 +404,4 @@ const setGlobalCtx = (ctx) => {
 
 const getGlobalCtx = () => globalCtx
 
-export {env, browser, reactive, build, adopt, fragment, scope, on, off, useElement, useTags, useAttr, useProp, setGlobalCtx, getGlobalCtx}
+export {env, browser, reactive, build, adopt, text, comment, fragment, scope, on, off, useElement, useTags, useAttr, useProp, setGlobalCtx, getGlobalCtx}
