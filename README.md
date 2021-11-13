@@ -30,9 +30,9 @@ const {browser} = require('singui')
 then
 
 ```javascript
-const {build} = browser()
+const {build, tags, text, attr, prop} = browser()
 
-const app = () => build(({tags, text, attach, attr, prop}) => {
+const app = (target) => build(({attach}) => {
 	const {h1, center, p} = tags
 
 	center(() => {
@@ -49,12 +49,10 @@ const app = () => build(({tags, text, attach, attr, prop}) => {
 		text('Welcome to SingUI')
 	})
 
-	return attach
+	attach(target)
 })
 
-const myApp = app()
-
-myApp(document.body)
+app(document.body)
 ```
 More details please see [Try it out](https://stackblitz.com/edit/singui-demo?file=index.js)
 
