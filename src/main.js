@@ -262,10 +262,7 @@ const env = ({
 				attach,
 				detatch,
 				before,
-				after,
-				$: attr,
-				$$: prop,
-				el: element
+				after
 			})
 			currentNode = parentNode
 		}
@@ -358,9 +355,7 @@ const env = ({
 			before,
 			after,
 			startAnchor,
-			endAnchor,
-			$: attr,
-			$$: prop
+			endAnchor
 		})
 
 		if (parentNode && autoAppend) attach(parentNode)
