@@ -179,6 +179,8 @@ const env = ({
 	const on = (...args) => addEventListener(currentNode, ...args)
 	const off = (...args) => removeEventListener(currentNode, ...args)
 
+	const useElement = () => currentNode
+
 	const adopt = (rawElement, clone) => (builder, append = true) => {
 		if (!rawElement) return
 
@@ -219,6 +221,7 @@ const env = ({
 				element,
 				on,
 				off,
+				useElement,
 				tags,
 				attr,
 				prop,
@@ -309,6 +312,7 @@ const env = ({
 			scope,
 			on,
 			off,
+			useElement,
 			tags,
 			attr,
 			prop,
@@ -334,7 +338,7 @@ const env = ({
 		return ret
 	}
 
-	return {build, adopt, text, comment, fragment, scope, on, off, tags, attr, prop}
+	return {build, adopt, text, comment, fragment, scope, on, off, useElement, tags, attr, prop}
 }
 
 let globalCtx = null
@@ -387,6 +391,10 @@ const fragment = (...args) => globalCtx.fragment(...args)
 const on = (...args) => globalCtx.on(...args)
 const off = (...args) => globalCtx.off(...args)
 const adopt = (...args) => globalCtx.adopt(...args)
+const useElement = () => globalCtx.useElement()
+const useTags = () => globalCtx.tags
+const useAttr = () => globalCtx.attr
+const useProp = () => globalCtx.prop
 
 const setGlobalCtx = (ctx) => {
 	globalCtx = ctx
@@ -394,4 +402,4 @@ const setGlobalCtx = (ctx) => {
 
 const getGlobalCtx = () => globalCtx
 
-export {env, browser, reactive, build, adopt, fragment, scope, on, off, setGlobalCtx, getGlobalCtx}
+export {env, browser, reactive, build, adopt, fragment, scope, on, off, useElement, useTags, useAttr, useProp, setGlobalCtx, getGlobalCtx}
