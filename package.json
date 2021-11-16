@@ -3,7 +3,7 @@
   "version": "0.2.3-alpha.1",
   "description": "The next-gen, no compile/transpile needed, self-contained JS UI library",
   "main": "dist/main.js",
-  "module": "src/main.js",
+  "module": "src/main.mjs",
   "scripts": {
     "build": "rollup -c ./rollup.config.js"
   },
