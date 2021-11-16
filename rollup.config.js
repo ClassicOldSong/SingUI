@@ -1,7 +1,7 @@
 import {terser} from 'rollup-plugin-terser'
 
 export default {
-	input: 'src/main.js',
+	input: 'src/main.mjs',
 	output: {
 		dir: 'dist',
 		name: 'singui',
@@ -10,4 +10,4 @@ export default {
 	plugins: [
 		terser()
 	]
-};
+}
