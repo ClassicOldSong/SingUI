@@ -11,26 +11,26 @@ The next-gen, no compile/transpile needed, self-contained JS UI library
 ```html
 <script src="https://cdn.jsdelivr.net/npm/singui/dist/main.min.js"></script>
 <script>
-	const {browser} = singui
+	const {browser, tags, text, attr, prop, setGlobalCtx} = singui
 </script>
 ```
 
 or
 
 ```javascript
-import {browser} from 'singui'
+import {browser, tags, text, attr, prop, setGlobalCtx} from 'singui'
 ```
 
 or
 
 ```javascript
-const {browser} = require('singui')
+const {browser, tags, text, attr, prop, setGlobalCtx} = require('singui')
 ```
 
 then
 
 ```javascript
-const {build, tags, text, attr, prop} = browser()
+setGlobalCtx(browser())
 
 const app = (target) => build(({attach}) => {
 	const {h1, center, p} = tags
