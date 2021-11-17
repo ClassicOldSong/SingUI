@@ -1,6 +1,10 @@
 const TARGET_SYMBOL = Symbol('TARGET')
+const emptyObj = Object.create(null)
+const R = Reflect
 
-const unwrap = proxiedObj => Reflect.get(proxiedObj, TARGET_SYMBOL) || proxiedObj
+const proxify = handler => new Proxy(emptyObj, handler)
+
+const unwrap = proxiedObj => R.get(proxiedObj, TARGET_SYMBOL) || proxiedObj
 
 const wrap = (target) => {
 	const targetObj = Object(target)
@@ -12,8 +16,8 @@ const wrap = (target) => {
 			if (propName[0] === '$') {
 				const realPropName = propName.substring(1)
 				return (handler) => {
-					if (handler) return val => Reflect.set(propProxy, realPropName, handler(val, Reflect.get(unwrap(propProxy), realPropName), realPropName))
-					return val => Reflect.set(propProxy, realPropName, val)
+					if (handler) return val => R.set(propProxy, realPropName, handler(val, R.get(unwrap(propProxy), realPropName), realPropName))
+					return val => R.set(propProxy, realPropName, val)
 				}
 			}
 
@@ -21,18 +25,18 @@ const wrap = (target) => {
 				const realPropName = propName.substring(1)
 				return (handler) => {
 					if (handler) return () => handler(realPropName, propProxy)
-					return () => wrap(Reflect.get(target, propName))
+					return () => wrap(R.get(target, propName))
 				}
 			}
 
-			return wrap(Reflect.get(target, propName))
+			return wrap(R.get(target, propName))
 		},
 		set(_, propName, val) {
 			if (propName[0] === '$' || propName[0] === '_') propName = propName.substring(1)
-			return Reflect.set(target, propName, val)
+			return R.set(target, propName, val)
 		},
 		apply(_, thisArg, argList) {
-			Reflect.apply(target, unwrap(thisArg), argList)
+			R.apply(target, unwrap(thisArg), argList)
 		}
 	})
 
@@ -57,6 +61,7 @@ const env = ({
 	getNextSibling,
 	getAttr,
 	setAttr,
+	removeAttr,
 	addEventListener,
 	removeEventListener
 }, currentNode) => {
@@ -71,7 +76,7 @@ const env = ({
 		return ret
 	}
 
-	const attr = new Proxy({}, {
+	const attr = proxify({
 		get(_, attrName) {
 			const target = currentNode
 			if (attrName[0] === '$') {
@@ -94,20 +99,21 @@ const env = ({
 		},
 		set(_, attrName, val) {
 			if (attrName[0] === '$' || attrName[0] === '_') attrName = attrName.substring(1)
-			setAttr(currentNode, camelToKebab(attrName), val)
+			if (val === null) removeAttr(currentNode, attrName)
+			else setAttr(currentNode, camelToKebab(attrName), val)
 			return true
 		}
 	})
 
-	const prop = new Proxy({}, {
+	const prop = proxify({
 		get(_, propName) {
 			if (propName === TARGET_SYMBOL) return currentNode
 			const target = currentNode
 			if (propName[0] === '$') {
 				const realPropName = propName.substring(1)
 				return (handler) => {
-					if (handler) return val => Reflect.set(target, realPropName, handler(val, Reflect.get(target, realPropName), realPropName))
-					return val => Reflect.set(target, realPropName, val)
+					if (handler) return val => R.set(target, realPropName, handler(val, R.get(target, realPropName), realPropName))
+					return val => R.set(target, realPropName, val)
 				}
 			}
 
@@ -115,15 +121,15 @@ const env = ({
 				const realPropName = propName.substring(1)
 				return (handler) => {
 					if (handler) return () => handler(realPropName, target)
-					return () => Reflect.get(target, realPropName)
+					return () => R.get(target, realPropName)
 				}
 			}
 
-			return wrap(Reflect.get(target, propName))
+			return wrap(R.get(target, propName))
 		},
 		set(_, propName, val) {
 			if (propName[0] === '$' || propName[0] === '_') propName = propName.substring(1)
-			Reflect.set(currentNode, propName, val)
+			R.set(currentNode, propName, val)
 			return true
 		}
 	})
@@ -184,31 +190,23 @@ const env = ({
 	const useElement = () => currentNode
 	const useAttr = () => {
 		const element = currentNode
-		return new Proxy({}, {
+		return proxify({
 			get(_, attrName) {
-				return scope(element, () => Reflect.get(attr, attrName))
+				return scope(element, () => R.get(attr, attrName))
 			},
 			set(_, attrName, val) {
-				scope(element, () => {
-					Reflect.set(attr, attrName, val)
-				})
-
-				return true
+				return scope(element, () => R.set(attr, attrName, val))
 			}
 		})
 	}
 	const useProp = () => {
 		const element = currentNode
-		return new Proxy({}, {
-			get(_, attrName) {
-				return scope(element, () => Reflect.get(prop, attrName))
+		return proxify({
+			get(_, propName) {
+				return scope(element, () => R.get(prop, propName))
 			},
-			set(_, attrName, val) {
-				scope(element, () => {
-					Reflect.set(prop, attrName, val)
-				})
-
-				return true
+			set(_, propName, val) {
+				return scope(element, () => R.set(prop, propName, val))
 			}
 		})
 	}
@@ -278,9 +276,9 @@ const env = ({
 
 	const tagHandlerStore = {}
 
-	tags = new Proxy({}, {
-		get(target, tagName) {
-			const storedHanler = Reflect.get(tagHandlerStore, tagName)
+	tags = proxify({
+		get(_, tagName) {
+			const storedHanler = R.get(tagHandlerStore, tagName)
 			if (storedHanler) return storedHanler
 
 			const kebabTagName = camelToKebab(tagName)
@@ -290,7 +288,7 @@ const env = ({
 				return adopt(element, false)(builder, append)
 			}
 
-			Reflect.set(tagHandlerStore, tagName, tagHandler)
+			R.set(tagHandlerStore, tagName, tagHandler)
 
 			return tagHandler
 		}
@@ -413,6 +411,9 @@ const browser = currentNode => env({
 	setAttr(node, attrName, val) {
 		return node.setAttribute(attrName, val)
 	},
+	removeAttr(node, attrName) {
+		return node.removeAttribute(attrName)
+	},
 	addEventListener(node, ...args) {
 		return node.addEventListener(...args)
 	},
@@ -433,25 +434,25 @@ const useTags = () => globalCtx.useTags()
 const useElement = () => globalCtx.useElement()
 const useAttr = () => globalCtx.useAttr()
 const useProp = () => globalCtx.useProp()
-const tags = new Proxy({}, {
+const tags = proxify({
 	get(_, tagName) {
-		return (...args) => Reflect.get(globalCtx.tags, tagName)(...args)
+		return (...args) => R.get(globalCtx.tags, tagName)(...args)
 	}
 })
-const attr = new Proxy({}, {
+const attr = proxify({
 	get(_, attrName) {
-		return Reflect.get(globalCtx.attr, attrName)
+		return R.get(globalCtx.attr, attrName)
 	},
 	set(_, attrName, val) {
-		return Reflect.set(globalCtx.attr, attrName, val)
+		return R.set(globalCtx.attr, attrName, val)
 	}
 })
-const prop = new Proxy({}, {
+const prop = proxify({
 	get(_, propName) {
-		return Reflect.get(globalCtx.prop, propName)
+		return R.get(globalCtx.prop, propName)
 	},
 	set(_, propName, val) {
-		return Reflect.set(globalCtx.prop, propName, val)
+		return R.set(globalCtx.prop, propName, val)
 	}
 })
 
