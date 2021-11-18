@@ -6,7 +6,7 @@
   "module": "src/main.mjs",
   "scripts": {
     "build": "rollup -c ./rollup.esbuild.config.js",
-    "release": "npx np --no-tests"
+    "release": "npm run build && npx np --no-tests"
   },
   "exports": {
     "module": "dist/main.min.js",
