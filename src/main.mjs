@@ -274,23 +274,22 @@ const env = ({
 		return {attach, detatch, before, after}
 	}
 
-	const tagHandlerStore = {}
+	const tagHandlerCache = {}
 
 	tags = proxify({
 		get(_, tagName) {
-			const storedHanler = R.get(tagHandlerStore, tagName)
-			if (storedHanler) return storedHanler
+			if (!R.get(tagHandlerCache, tagName)) {
+				const kebabTagName = camelToKebab(tagName)
 
-			const kebabTagName = camelToKebab(tagName)
+				const tagHandler = (builder, append) => {
+					const element = createElement(kebabTagName)
+					return adopt(element, false)(builder, append)
+				}
 
-			const tagHandler = (builder, append) => {
-				const element = createElement(kebabTagName)
-				return adopt(element, false)(builder, append)
+				R.set(tagHandlerCache, tagName, tagHandler)
 			}
 
-			R.set(tagHandlerStore, tagName, tagHandler)
-
-			return tagHandler
+			return R.get(tagHandlerCache, tagName)
 		}
 	})
 
@@ -375,8 +374,6 @@ const env = ({
 	return {build, adopt, text, comment, fragment, scope, on, off, useTags, useElement, useAttr, useProp, tags, attr, prop}
 }
 
-let globalCtx = null
-
 const browser = currentNode => env({
 	createElement(tag) {
 		return document.createElement(tag)
@@ -421,6 +418,8 @@ const browser = currentNode => env({
 		return node.removeEventListener(...args)
 	}
 }, currentNode)
+
+let globalCtx = null
 
 const build = (...args) => globalCtx.build(...args)
 const adopt = (...args) => globalCtx.adopt(...args)
