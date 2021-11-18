@@ -13,7 +13,7 @@
     "script": "dist/main.umd.min.js",
     "require": "dist/main.min.cjs",
     "node": "src/main.mjs",
-    "default": "dist/main.js"
+    "default": "dist/main.min.js"
   },
   "files": [
     "src/**/*",
