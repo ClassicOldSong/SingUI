@@ -43,12 +43,6 @@ const wrap = (target) => {
 	return propProxy
 }
 
-const camelToKebab = str => [...str].map((i) => {
-	const lowerCaseLetter = i.toLowerCase()
-	if (i === lowerCaseLetter) return i
-	return `-${lowerCaseLetter}`
-}).join('')
-
 const env = ({
 	createElement,
 	createTextNode,
@@ -64,43 +58,83 @@ const env = ({
 	removeAttr,
 	addEventListener,
 	removeEventListener
-}, currentNode) => {
+}, currentNode, currentNamespace) => {
 	let build = null
 	let tags = null
 
-	const scope = (node, builder) => {
-		const prevNode = currentNode
+	const prevNodes = []
+	const pushCurrentNode = (node) => {
+		prevNodes.push(currentNode)
 		currentNode = node
-		const ret = builder()
-		currentNode = prevNode
+	}
+	const popCurrentNode = () => {
+		currentNode = prevNodes.pop()
+	}
+
+	const prevNamespaces = []
+	const pushCurrentNamespace = (namespace) => {
+		prevNamespaces.push(namespace)
+		currentNamespace = namespace
+	}
+	const popCurrentNamespace = () => {
+		currentNamespace = prevNamespaces.pop()
+	}
+
+	const scoped = (builder, node = currentNode) => (...args) => {
+		pushCurrentNode(node)
+		const ret = builder(...args)
+		popCurrentNode()
+		return ret
+	}
+
+	const namespaced = (builder, namespace = currentNamespace) => (...args) => {
+		pushCurrentNamespace(namespace)
+		const ret = builder(...args)
+		popCurrentNamespace()
+		return ret
+	}
+
+	const clearScope = builder => (...args) => {
+		pushCurrentNode()
+		const ret = builder(...args)
+		popCurrentNode()
+		return ret
+	}
+
+	const clearNamespace = builder => (...args) => {
+		pushCurrentNamespace()
+		const ret = builder(...args)
+		popCurrentNamespace()
 		return ret
 	}
 
 	const attr = proxify({
 		get(_, attrName) {
 			const target = currentNode
+			const namespace = currentNamespace
+
 			if (attrName[0] === '$') {
-				const realAttrName = camelToKebab(attrName.substring(1))
+				const realAttrName = attrName.substring(1)
 				return (handler) => {
-					if (handler) return val => setAttr(target, realAttrName, handler(val, getAttr(target, realAttrName), realAttrName))
-					return val => setAttr(target, realAttrName, val)
+					if (handler) return val => setAttr(target, realAttrName, handler(val, getAttr(target, realAttrName), realAttrName, namespace), namespace)
+					return val => setAttr(target, realAttrName, val, namespace)
 				}
 			}
 
 			if (attrName[0] === '_') {
-				const realAttrName = camelToKebab(attrName.substring(1))
+				const realAttrName = attrName.substring(1)
 				return (handler) => {
-					if (handler) return () => handler(realAttrName, target)
-					return () => getAttr(target, realAttrName)
+					if (handler) return () => handler(realAttrName, target, namespace)
+					return () => getAttr(target, realAttrName, namespace)
 				}
 			}
 
-			return getAttr(target, camelToKebab(attrName))
+			return getAttr(target, attrName, namespace)
 		},
 		set(_, attrName, val) {
 			if (attrName[0] === '$' || attrName[0] === '_') attrName = attrName.substring(1)
-			if (val === null) removeAttr(currentNode, attrName)
-			else setAttr(currentNode, camelToKebab(attrName), val)
+			if (val === null) removeAttr(currentNode, attrName, currentNamespace)
+			else setAttr(currentNode, attrName, val, currentNamespace)
 			return true
 		}
 	})
@@ -148,7 +182,7 @@ const env = ({
 		return wrappedNode
 	}
 
-	const fragment = (builder, append = true, mamager) => {
+	const fragment = (builder, append = true) => {
 		const ret = {}
 
 		build(({attach, detatch, before, after, startAnchor, endAnchor}) => {
@@ -168,7 +202,7 @@ const env = ({
 			}
 			ret.append = (builder) => {
 				const tempStore = createDocumentFragment()
-				const ret = scope(tempStore, () => build(builder))
+				const ret = scoped(build, tempStore)(builder)
 				appendBefore(endAnchor, tempStore)
 				return ret
 			}
@@ -176,7 +210,7 @@ const env = ({
 				ret.empty()
 				return ret.append(builder)
 			}
-		}, append, mamager)
+		}, append)
 
 		if (builder) ret.append(builder)
 
@@ -186,27 +220,36 @@ const env = ({
 	const on = (...args) => addEventListener(currentNode, ...args)
 	const off = (...args) => removeEventListener(currentNode, ...args)
 
-	const useTags = () => tags
 	const useElement = () => currentNode
-	const useAttr = () => {
-		const element = currentNode
+	const useTags = (namespace) => {
+		const getTag = namespaced(tagName => R.get(tags, tagName), namespace)
+		return proxify({
+			get(_, tagName) {
+				return getTag(tagName)
+			}
+		})
+	}
+	const useAttr = (namespace) => {
+		const getAttr = scoped(namespaced(attrName => R.get(attr, attrName), namespace))
+		const setAttr = scoped(namespaced((attrName, val) => R.set(attr, attrName, val), namespace))
 		return proxify({
 			get(_, attrName) {
-				return scope(element, () => R.get(attr, attrName))
+				return getAttr(attrName)
 			},
 			set(_, attrName, val) {
-				return scope(element, () => R.set(attr, attrName, val))
+				return setAttr(attrName, val)
 			}
 		})
 	}
 	const useProp = () => {
-		const element = currentNode
+		const getProp = scoped(propName => R.get(prop, propName))
+		const setProp = scoped((propName, val) => R.set(prop, propName, val))
 		return proxify({
 			get(_, propName) {
-				return scope(element, () => R.get(prop, propName))
+				return getProp(propName)
 			},
 			set(_, propName, val) {
-				return scope(element, () => R.set(prop, propName, val))
+				return setProp(propName, val)
 			}
 		})
 	}
@@ -215,7 +258,6 @@ const env = ({
 		if (!rawElement) return
 
 		const element = clone ? cloneElement(rawElement) : rawElement
-		const parentNode = currentNode
 		const elementStore = createDocumentFragment()
 
 		const attach = (target) => {
@@ -228,26 +270,29 @@ const env = ({
 		}
 		const before = (builder) => {
 			const tempStore = createDocumentFragment()
-			const ret = scope(tempStore, builder)
+			const ret = scoped(build, tempStore)(builder)
 			appendBefore(element, tempStore)
 			return ret
 		}
 		const after = (builder) => {
 			const tempStore = createDocumentFragment()
-			const ret = scope(tempStore, builder)
+			const ret = scoped(build, tempStore)(builder)
 			appendAfter(element, tempStore)
 			return ret
 		}
 
 		if (builder) {
-			currentNode = element
-			builder({
+			pushCurrentNode(element)
+			clearNamespace(builder)({
 				build,
 				adopt,
 				text,
 				comment,
 				fragment,
-				scope,
+				scoped,
+				namespaced,
+				clearScope,
+				clearNamespace,
 				element,
 				on,
 				off,
@@ -263,10 +308,10 @@ const env = ({
 				before,
 				after
 			})
-			currentNode = parentNode
+			popCurrentNode()
 		}
 
-		if (append && parentNode) appendChild(parentNode, element)
+		if (append && currentNode) appendChild(currentNode, element)
 		else appendChild(elementStore, element)
 
 		if (!clone) rawElement = null
@@ -274,35 +319,27 @@ const env = ({
 		return {attach, detatch, before, after}
 	}
 
-	const tagHandlerCache = {}
-
 	tags = proxify({
 		get(_, tagName) {
-			if (!R.get(tagHandlerCache, tagName)) {
-				const kebabTagName = camelToKebab(tagName)
-
-				const tagHandler = (builder, append) => {
-					const element = createElement(kebabTagName)
-					return adopt(element, false)(builder, append)
-				}
-
-				R.set(tagHandlerCache, tagName, tagHandler)
+			const namespace = currentNamespace
+			return (builder, append) => {
+				const element = createElement(tagName, namespace)
+				return adopt(element, false)(builder, append)
 			}
-
-			return R.get(tagHandlerCache, tagName)
 		}
 	})
 
-	build = (builder, append = true, mamager) => {
-		const parentNode = currentNode
+	build = (builder, append = true) => {
 		const elementStore = createDocumentFragment()
 		const startAnchor = createTextNode('')
 		const endAnchor = createTextNode('')
 
+		builder = clearNamespace(builder)
+
 		appendChild(elementStore, startAnchor)
 		appendChild(elementStore, endAnchor)
 
-		currentNode = elementStore
+		pushCurrentNode(elementStore)
 
 		const detatch = () => {
 			let currentElement = startAnchor
@@ -324,13 +361,13 @@ const env = ({
 		}
 		const before = (builder) => {
 			const tempStore = createDocumentFragment()
-			const ret = scope(tempStore, builder)
+			const ret = scoped(build, tempStore)(builder)
 			appendBefore(startAnchor, tempStore)
 			return ret
 		}
 		const after = (builder) => {
 			const tempStore = createDocumentFragment()
-			const ret = scope(tempStore, builder)
+			const ret = scoped(build, tempStore)(builder)
 			appendAfter(endAnchor, tempStore)
 			return ret
 		}
@@ -341,7 +378,10 @@ const env = ({
 			text,
 			comment,
 			fragment,
-			scope,
+			scoped,
+			namespaced,
+			clearScope,
+			clearNamespace,
 			on,
 			off,
 			useTags,
@@ -359,65 +399,105 @@ const env = ({
 			endAnchor
 		})
 
-		if (parentNode && append) attach(parentNode)
-
-		currentNode = parentNode
-
-		if (mamager) {
-			mamager.attach = attach
-			mamager.detatch = detatch
-		}
+		popCurrentNode()
+		if (currentNode && append) attach(currentNode)
 
 		return ret
 	}
 
-	return {build, adopt, text, comment, fragment, scope, on, off, useTags, useElement, useAttr, useProp, tags, attr, prop}
+	return {
+		build,
+		adopt,
+		text,
+		comment,
+		fragment,
+		scoped,
+		namespaced,
+		clearScope,
+		clearNamespace,
+		on,
+		off,
+		useTags,
+		useElement,
+		useAttr,
+		useProp,
+		tags,
+		attr,
+		prop
+	}
 }
 
-const browser = currentNode => env({
-	createElement(tag) {
-		return document.createElement(tag)
-	},
-	createTextNode(text) {
-		return document.createTextNode(text)
-	},
-	createComment(text) {
-		return document.createComment(text)
-	},
-	createDocumentFragment() {
-		return document.createDocumentFragment()
-	},
-	cloneElement(element) {
-		return element.cloneNode(true)
-	},
-	appendChild(parent, child) {
-		return parent.appendChild(child)
-	},
-	appendBefore(node, element) {
-		return node.parentNode.insertBefore(element, node)
-	},
-	appendAfter(node, element) {
-		return node.parentNode.insertBefore(element, node.nextSibling)
-	},
-	getNextSibling(node) {
-		return node.nextSibling
-	},
-	getAttr(node, attrName) {
-		return node.getAttribute(attrName)
-	},
-	setAttr(node, attrName, val) {
-		return node.setAttribute(attrName, val)
-	},
-	removeAttr(node, attrName) {
-		return node.removeAttribute(attrName)
-	},
-	addEventListener(node, ...args) {
-		return node.addEventListener(...args)
-	},
-	removeEventListener(node, ...args) {
-		return node.removeEventListener(...args)
-	}
-}, currentNode)
+const browser = (currentNode, userNamespaceMap = {}) => {
+	const namespaceURIMap = Object.assign({
+		xml: 'http://www.w3.org/XML/1998/namespace',
+		html: 'http://www.w3.org/1999/xhtml',
+		svg: 'http://www.w3.org/2000/svg',
+		math: 'http://www.w3.org/1998/Math/MathML',
+		xlink: 'http://www.w3.org/1999/xlink'
+	}, userNamespaceMap)
+
+	return env({
+		createElement(tag, namespace) {
+			if (namespace) {
+				const namespaceURI = Reflect.get(namespaceURIMap, namespace) || namespace
+				return document.createElementNS(namespaceURI, tag)
+			}
+			return document.createElement(tag)
+		},
+		createTextNode(text) {
+			return document.createTextNode(text)
+		},
+		createComment(text) {
+			return document.createComment(text)
+		},
+		createDocumentFragment() {
+			return document.createDocumentFragment()
+		},
+		cloneElement(element) {
+			return element.cloneNode(true)
+		},
+		appendChild(parent, child) {
+			return parent.appendChild(child)
+		},
+		appendBefore(node, element) {
+			return node.parentNode.insertBefore(element, node)
+		},
+		appendAfter(node, element) {
+			return node.parentNode.insertBefore(element, node.nextSibling)
+		},
+		getNextSibling(node) {
+			return node.nextSibling
+		},
+		getAttr(node, attrName, namespace) {
+			if (namespace) {
+				const namespaceURI = Reflect.get(namespaceURIMap, namespace) || namespace
+				return node.getAttributeNS(namespaceURI, attrName)
+			}
+			return node.getAttribute(attrName)
+		},
+		// eslint-disable-next-line max-params
+		setAttr(node, attrName, val, namespace) {
+			if (namespace) {
+				const namespaceURI = Reflect.get(namespaceURIMap, namespace) || namespace
+				return node.setAttributeNS(namespaceURI, attrName, val)
+			}
+			return node.setAttribute(attrName, val)
+		},
+		removeAttr(node, attrName, namespace) {
+			if (namespace) {
+				const namespaceURI = Reflect.get(namespaceURIMap, namespace) || namespace
+				return node.removeAttributeNS(namespaceURI, attrName)
+			}
+			return node.removeAttribute(attrName)
+		},
+		addEventListener(node, ...args) {
+			return node.addEventListener(...args)
+		},
+		removeEventListener(node, ...args) {
+			return node.removeEventListener(...args)
+		}
+	}, currentNode)
+}
 
 let globalCtx = null
 
@@ -426,10 +506,13 @@ const adopt = (...args) => globalCtx.adopt(...args)
 const text = (...args) => globalCtx.text(...args)
 const comment = (...args) => globalCtx.comment(...args)
 const fragment = (...args) => globalCtx.fragment(...args)
-const scope = (...args) => globalCtx.scope(...args)
+const scoped = (...args) => globalCtx.scoped(...args)
+const namespaced = (...args) => globalCtx.namespaced(...args)
+const clearScope = (...args) => globalCtx.clearScope(...args)
+const clearNamespace = (...args) => globalCtx.clearNamespace(...args)
 const on = (...args) => globalCtx.on(...args)
 const off = (...args) => globalCtx.off(...args)
-const useTags = () => globalCtx.useTags()
+const useTags = (...args) => globalCtx.useTags(...args)
 const useElement = () => globalCtx.useElement()
 const useAttr = () => globalCtx.useAttr()
 const useProp = () => globalCtx.useProp()
@@ -461,4 +544,29 @@ const setGlobalCtx = (ctx) => {
 
 const getGlobalCtx = () => globalCtx
 
-export {env, browser, wrap, unwrap, build, adopt, text, comment, fragment, scope, on, off, useElement, useTags, useAttr, useProp, tags, attr, prop, setGlobalCtx, getGlobalCtx}
+export {
+	env,
+	browser,
+	wrap,
+	unwrap,
+	build,
+	adopt,
+	text,
+	comment,
+	fragment,
+	scoped,
+	namespaced,
+	clearScope,
+	clearNamespace,
+	on,
+	off,
+	useElement,
+	useTags,
+	useAttr,
+	useProp,
+	tags,
+	attr,
+	prop,
+	setGlobalCtx,
+	getGlobalCtx
+}
