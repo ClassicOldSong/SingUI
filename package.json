@@ -1,9 +1,10 @@
 {
   "name": "singui",
-  "version": "0.2.5-alpha.1",
+  "version": "0.2.6-alpha.1",
   "description": "The next-gen, no compile/transpile needed, self-contained JS UI library",
   "main": "dist/main.min.js",
   "module": "src/main.mjs",
+  "unpkg": "dist/main.umd.min.js",
   "scripts": {
     "build": "rollup -c ./rollup.esbuild.config.js"
   },
@@ -32,9 +33,9 @@
   },
   "homepage": "https://github.com/ClassicOldSong/SingUI",
   "devDependencies": {
-    "esbuild": "^0.13.14",
-    "rollup": "^2.60.0",
-    "rollup-plugin-esbuild": "^4.7.1",
+    "esbuild": "^0.14.2",
+    "rollup": "^2.60.2",
+    "rollup-plugin-esbuild": "^4.7.2",
     "rollup-plugin-terser": "^7.0.2"
   }
 }

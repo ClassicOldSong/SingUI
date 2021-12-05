@@ -43,6 +43,12 @@ const wrap = (target) => {
 	return propProxy
 }
 
+const camelToKebab = str => [...str].map((i) => {
+	const lowerCaseLetter = i.toLowerCase()
+	if (i === lowerCaseLetter) return i
+	return `-${lowerCaseLetter}`
+}).join('')
+
 const env = ({
 	createElement,
 	createTextNode,
@@ -58,7 +64,7 @@ const env = ({
 	removeAttr,
 	addEventListener,
 	removeEventListener
-}, currentNode, currentNamespace) => {
+}, currentNode = null, currentNamespace = null) => {
 	let build = null
 	let tags = null
 
@@ -80,18 +86,24 @@ const env = ({
 		currentNamespace = prevNamespaces.pop()
 	}
 
-	const scoped = (builder, node = currentNode) => (...args) => {
-		pushCurrentNode(node)
-		const ret = builder(...args)
-		popCurrentNode()
-		return ret
+	const scoped = (builder, node = currentNode) => {
+		if (node === null) return builder
+		return (...args) => {
+			pushCurrentNode(node)
+			const ret = builder(...args)
+			popCurrentNode()
+			return ret
+		}
 	}
 
-	const namespaced = (builder, namespace = currentNamespace) => (...args) => {
-		pushCurrentNamespace(namespace)
-		const ret = builder(...args)
-		popCurrentNamespace()
-		return ret
+	const namespaced = (builder, namespace = currentNamespace) => {
+		if (namespace === null) return builder
+		return (...args) => {
+			pushCurrentNamespace(namespace)
+			const ret = builder(...args)
+			popCurrentNamespace()
+			return ret
+		}
 	}
 
 	const clearScope = builder => (...args) => {
@@ -221,22 +233,26 @@ const env = ({
 	const off = (...args) => removeEventListener(currentNode, ...args)
 
 	const useElement = () => currentNode
-	const useTags = (namespace) => {
+	const useTags = (toKebab = true, namespace = null) => {
 		const getTag = namespaced(tagName => R.get(tags, tagName), namespace)
 		return proxify({
 			get(_, tagName) {
+				if (toKebab) tagName = camelToKebab(tagName)
 				return getTag(tagName)
 			}
 		})
 	}
-	const useAttr = (namespace) => {
-		const getAttr = scoped(namespaced(attrName => R.get(attr, attrName), namespace))
-		const setAttr = scoped(namespaced((attrName, val) => R.set(attr, attrName, val), namespace))
+	const useAttr = (capture = true, toKebab = true, namespace = null) => {
+		const scope = capture && currentNode || null
+		const getAttr = scoped(namespaced(attrName => R.get(attr, attrName), namespace), scope)
+		const setAttr = scoped(namespaced((attrName, val) => R.set(attr, attrName, val), namespace), scope)
 		return proxify({
 			get(_, attrName) {
+				if (toKebab) attrName = camelToKebab(attrName)
 				return getAttr(attrName)
 			},
 			set(_, attrName, val) {
+				if (toKebab) attrName = camelToKebab(attrName)
 				return setAttr(attrName, val)
 			}
 		})
@@ -421,8 +437,8 @@ const env = ({
 		useElement,
 		useAttr,
 		useProp,
-		tags,
-		attr,
+		tags: useTags(),
+		attr: useAttr(false),
 		prop
 	}
 }
@@ -513,9 +529,9 @@ const clearNamespace = (...args) => globalCtx.clearNamespace(...args)
 const on = (...args) => globalCtx.on(...args)
 const off = (...args) => globalCtx.off(...args)
 const useTags = (...args) => globalCtx.useTags(...args)
-const useElement = () => globalCtx.useElement()
-const useAttr = () => globalCtx.useAttr()
-const useProp = () => globalCtx.useProp()
+const useElement = (...args) => globalCtx.useElement(...args)
+const useAttr = (...args) => globalCtx.useAttr(...args)
+const useProp = (...args) => globalCtx.useProp(...args)
 const tags = proxify({
 	get(_, tagName) {
 		return (...args) => R.get(globalCtx.tags, tagName)(...args)
