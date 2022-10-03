@@ -515,7 +515,7 @@ const env = ({
 	}
 }
 
-const browser = (currentNode, userNamespaceMap = {}) => {
+const browser = (doc = document, userNamespaceMap = {}) => {
 	const namespaceURIMap = Object.assign({
 		xml: 'http://www.w3.org/XML/1998/namespace',
 		html: 'http://www.w3.org/1999/xhtml',
@@ -528,18 +528,18 @@ const browser = (currentNode, userNamespaceMap = {}) => {
 		createElement(tag, namespace) {
 			if (namespace) {
 				const namespaceURI = Reflect.get(namespaceURIMap, namespace) || namespace
-				return document.createElementNS(namespaceURI, tag)
+				return doc.createElementNS(namespaceURI, tag)
 			}
-			return document.createElement(tag)
+			return doc.createElement(tag)
 		},
 		createTextNode(text) {
-			return document.createTextNode(text)
+			return doc.createTextNode(text)
 		},
 		createComment(text) {
-			return document.createComment(text)
+			return doc.createComment(text)
 		},
 		createDocumentFragment() {
-			return document.createDocumentFragment()
+			return doc.createDocumentFragment()
 		},
 		cloneElement(element) {
 			return element.cloneNode(true)
@@ -584,7 +584,7 @@ const browser = (currentNode, userNamespaceMap = {}) => {
 		removeEventListener(node, ...args) {
 			return node.removeEventListener(...args)
 		}
-	}, currentNode)
+	})
 }
 
 let globalCtx = null
