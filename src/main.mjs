@@ -64,7 +64,11 @@ const env = ({
 	removeAttr,
 	addEventListener,
 	removeEventListener
-}, currentNode = null, currentNamespace = null) => {
+}, {
+	currentNode = null,
+	currentNamespace = null,
+	lifeCycleHooks = new WeakMap()
+} = {}) => {
 	let build = null
 	let tags = null
 
@@ -270,19 +274,70 @@ const env = ({
 		})
 	}
 
+	const prepareHooks = () => {
+		let hooks = new Set()
+		const runHooks = (...args) => hooks.forEach(hook => hook(...args))
+
+		const addHooks = (...newHooks) => {
+			for (let i of newHooks) hooks.add(i)
+		}
+
+		const removeHooks = (...oldHooks) => {
+			for (let i of oldHooks) hooks.delete(i)
+		}
+
+		return [runHooks, addHooks, removeHooks]
+	}
+
+	const useLifeCycle = (target) => {
+		if (!target) target = currentNode
+		let hooks = lifeCycleHooks.get(target)
+		if (hooks) return hooks
+
+		const [beforeAttach, onBeforeAttach, offBeforeAttach] = prepareHooks()
+		const [afterAttach, onAfterAttach, offAfterAttach] = prepareHooks()
+		const [beforeDetatch, onBeforeDetatch, offBeforeDetatch] = prepareHooks()
+		const [afterDetatch, onAfterDetatch, offAfterDetatch] = prepareHooks()
+
+		hooks = {
+			beforeAttach,
+			afterAttach,
+			beforeDetatch,
+			afterDetatch,
+			onBeforeAttach,
+			onAfterAttach,
+			onBeforeDetatch,
+			onAfterDetatch,
+			offBeforeAttach,
+			offAfterAttach,
+			offBeforeDetatch,
+			offAfterDetatch
+		}
+
+		lifeCycleHooks.set(target, hooks)
+
+		return hooks
+	}
+
 	const adopt = (rawElement, clone) => (builder, append = true) => {
 		if (!rawElement) return
 
 		const element = clone ? cloneElement(rawElement) : rawElement
 		const elementStore = createDocumentFragment()
 
+		const {beforeAttach, afterAttach, beforeDetatch, afterDetatch} = useLifeCycle(element)
+
 		const attach = (target) => {
 			if (!target) target = currentNode
 			if (!target) return
+			beforeAttach(target)
 			appendChild(target, element)
+			afterAttach(target)
 		}
 		const detatch = () => {
+			beforeDetatch()
 			appendChild(elementStore, element)
+			afterDetatch()
 		}
 		const before = (builder) => {
 			const tempStore = createDocumentFragment()
@@ -297,9 +352,12 @@ const env = ({
 			return ret
 		}
 
+		// eslint-disable-next-line init-declarations
+		let ret
+
 		if (builder) {
 			pushCurrentNode(element)
-			clearNamespace(builder)({
+			ret = clearNamespace(builder)({
 				build,
 				adopt,
 				text,
@@ -316,6 +374,7 @@ const env = ({
 				useElement,
 				useAttr,
 				useProp,
+				useLifeCycle,
 				tags,
 				attr,
 				prop,
@@ -327,12 +386,12 @@ const env = ({
 			popCurrentNode()
 		}
 
-		if (append && currentNode) appendChild(currentNode, element)
-		else appendChild(elementStore, element)
+		if (append && currentNode) attach(currentNode)
+		else attach(elementStore)
 
 		if (!clone) rawElement = null
 
-		return {attach, detatch, before, after}
+		return {element, ret, attach, detatch, before, after}
 	}
 
 	tags = proxify({
@@ -357,7 +416,11 @@ const env = ({
 
 		pushCurrentNode(elementStore)
 
+		const {beforeAttach, afterAttach, beforeDetatch, afterDetatch} = useLifeCycle(elementStore)
+
 		const detatch = () => {
+			beforeDetatch()
+
 			let currentElement = startAnchor
 			while (currentElement !== endAnchor) {
 				const nextElement = getNextSibling(currentElement)
@@ -365,15 +428,22 @@ const env = ({
 				currentElement = nextElement
 			}
 			appendChild(elementStore, endAnchor)
+
+			afterDetatch()
 		}
 		const attach = (target) => {
 			if (!target) target = currentNode
 			if (!target) return
 
 			detatch()
+
+			beforeAttach(target)
+
 			appendChild(target, startAnchor)
 			appendChild(target, elementStore)
 			appendChild(target, endAnchor)
+
+			afterAttach(target)
 		}
 		const before = (builder) => {
 			const tempStore = createDocumentFragment()
@@ -404,6 +474,7 @@ const env = ({
 			useElement,
 			useAttr,
 			useProp,
+			useLifeCycle,
 			tags,
 			attr,
 			prop,
@@ -437,13 +508,14 @@ const env = ({
 		useElement,
 		useAttr,
 		useProp,
+		useLifeCycle,
 		tags: useTags(),
 		attr: useAttr(false),
 		prop
 	}
 }
 
-const browser = (currentNode, userNamespaceMap = {}) => {
+const browser = (doc = document, userNamespaceMap = {}) => {
 	const namespaceURIMap = Object.assign({
 		xml: 'http://www.w3.org/XML/1998/namespace',
 		html: 'http://www.w3.org/1999/xhtml',
@@ -456,18 +528,18 @@ const browser = (currentNode, userNamespaceMap = {}) => {
 		createElement(tag, namespace) {
 			if (namespace) {
 				const namespaceURI = Reflect.get(namespaceURIMap, namespace) || namespace
-				return document.createElementNS(namespaceURI, tag)
+				return doc.createElementNS(namespaceURI, tag)
 			}
-			return document.createElement(tag)
+			return doc.createElement(tag)
 		},
 		createTextNode(text) {
-			return document.createTextNode(text)
+			return doc.createTextNode(text)
 		},
 		createComment(text) {
-			return document.createComment(text)
+			return doc.createComment(text)
 		},
 		createDocumentFragment() {
-			return document.createDocumentFragment()
+			return doc.createDocumentFragment()
 		},
 		cloneElement(element) {
 			return element.cloneNode(true)
@@ -512,7 +584,7 @@ const browser = (currentNode, userNamespaceMap = {}) => {
 		removeEventListener(node, ...args) {
 			return node.removeEventListener(...args)
 		}
-	}, currentNode)
+	})
 }
 
 let globalCtx = null
@@ -532,6 +604,7 @@ const useTags = (...args) => globalCtx.useTags(...args)
 const useElement = (...args) => globalCtx.useElement(...args)
 const useAttr = (...args) => globalCtx.useAttr(...args)
 const useProp = (...args) => globalCtx.useProp(...args)
+const useLifeCycle = (...args) => globalCtx.useLifeCycle(...args)
 const tags = proxify({
 	get(_, tagName) {
 		return (...args) => R.get(globalCtx.tags, tagName)(...args)
@@ -580,6 +653,7 @@ export {
 	useTags,
 	useAttr,
 	useProp,
+	useLifeCycle,
 	tags,
 	attr,
 	prop,
