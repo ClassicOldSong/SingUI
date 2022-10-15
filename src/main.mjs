@@ -42,8 +42,9 @@ const useSignal = (initVal) => {
 	}
 
 	const signal = (newVal) => {
-		if (newVal) return setVal(newVal)
-		return val
+		// eslint-disable-next-line no-undefined
+		if (newVal === undefined) return val
+		return setVal(newVal)
 	}
 
 	signal.connect = connect

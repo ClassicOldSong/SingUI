@@ -1,6 +1,6 @@
 {
   "name": "singui",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "The next-gen, no compile/transpile needed, self-contained JS UI library",
   "main": "dist/main.min.js",
   "module": "src/main.mjs",
