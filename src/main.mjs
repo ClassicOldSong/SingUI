@@ -1,22 +1,200 @@
 const TARGET_SYMBOL = Symbol('TARGET')
 const emptyObj = Object.create(null)
+const proxyMap = new WeakMap()
 const R = Reflect
 
-const proxify = handler => new Proxy(emptyObj, handler)
+const prepareHooks = () => {
+	let hooks = new Set()
+	const runHooks = (...args) => hooks.forEach(hook => hook(...args))
+
+	const addHooks = (...newHooks) => {
+		for (let i of newHooks) hooks.add(i)
+
+		let disconnected = false
+
+		return () => {
+			if (disconnected) return
+			for (let i of newHooks) hooks.delete(i)
+			disconnected = true
+		}
+	}
+
+	return [runHooks, addHooks]
+}
+
+const useSignal = (initVal) => {
+	let val = initVal
+
+	const [runHooks, addHooks] = prepareHooks()
+
+	const connect = (...handlers) => {
+		if (handlers.length === 0) return val
+		for (let i of handlers) i(val)
+		return addHooks(...handlers)
+	}
+
+	const setVal = (newVal) => {
+		if (val === newVal) return
+		if (typeof newVal === 'function') newVal = newVal(val)
+		const oldVal = val
+		val = newVal
+		runHooks(newVal, oldVal)
+	}
+
+	const signal = (newVal) => {
+		if (newVal) return setVal(newVal)
+		return val
+	}
+
+	signal.connect = connect
+
+	return signal
+}
+
+const mux = (...args) => {
+	const staticStrs = args.shift()
+	const valList = new Array(staticStrs.length + args.length)
+
+	let batchDepth = 0
+	let handlerCount = 0
+	let disconnectList = null
+	let evalList = []
+
+	for (let i in staticStrs) {
+		valList[i * 2] = staticStrs[i]
+	}
+
+	const strMux = useSignal()
+
+	const flush = () => {
+		if (batchDepth <= 0) {
+			for (let i of evalList) i()
+			strMux(''.concat(...valList))
+			batchDepth = 0
+		}
+	}
+
+	const pause = () => {
+		batchDepth += 1
+	}
+
+	const resume = () => {
+		batchDepth -= 1
+		if (batchDepth <= 0) flush()
+	}
+
+	const batch = (handler) => {
+		pause()
+		handler()
+		resume()
+	}
+
+	const init = () => {
+		if (disconnectList) return
+		pause()
+		disconnectList = args.map((signal, index) => {
+			index = index * 2 + 1
+			if (typeof signal === 'function') {
+				evalList.push(() => {
+					valList[index] = signal()
+				})
+				if (typeof signal.connect === 'function') return signal.connect(flush)
+				return null
+			}
+
+			valList[index] = signal
+			return null
+		})
+		resume()
+	}
+
+	const destroy = () => {
+		if (!disconnectList) return
+		for (let i of disconnectList) {
+			if (i) i()
+		}
+		disconnectList = null
+		evalList.length = 0
+		handlerCount = 0
+	}
+
+	const connect = (...handlers) => {
+		if (!handlers.length) return strMux()
+
+		if (!disconnectList) init()
+
+		const disconnect = strMux.connect(...handlers)
+		handlerCount += handlers.length
+
+		let disconnected = false
+
+		return () => {
+			if (disconnected) return
+
+			disconnect()
+			handlerCount -= handlers.length
+			if (handlerCount <= 0) destroy()
+
+			disconnected = true
+		}
+	}
+
+	const signal = () => strMux()
+
+	signal.connect = connect
+	signal.pause = pause
+	signal.resume = resume
+	signal.batch = batch
+
+	return signal
+}
+
+const getCachedProxy = (target, lifeCycle) => {
+	if (proxyMap.has(target)) {
+		const lifeCycleMap = proxyMap.get(target)
+		if (lifeCycleMap.has(lifeCycle)) return lifeCycleMap.get(lifeCycle)
+	}
+
+	return null
+}
+
+const proxify = (handler, target, lifeCycle) => {
+	if (target) {
+		let lifeCycleMap = null
+		if (proxyMap.has(target)) {
+			lifeCycleMap = proxyMap.get(target)
+		} else {
+			lifeCycleMap = new WeakMap()
+			proxyMap.set(target, lifeCycleMap)
+		}
+
+		const proxied = new Proxy(target, handler)
+		lifeCycleMap.set(lifeCycle, proxied)
+
+		return proxied
+	}
+
+	return new Proxy(emptyObj, handler)
+}
 
 const unwrap = proxiedObj => R.get(proxiedObj, TARGET_SYMBOL) || proxiedObj
 
-const wrap = (target) => {
+const wrapObj = (target, lifeCycle) => {
+	const cachedProxy = getCachedProxy(target, lifeCycle)
+	if (cachedProxy) return cachedProxy
+
 	const targetObj = Object(target)
 	if (targetObj !== target) return target
 
-	const propProxy = new Proxy(targetObj, {
+	const signalMap = {}
+
+	const propProxy = proxify({
 		get(_, propName) {
 			if (propName === TARGET_SYMBOL) return target
 			if (propName[0] === '$') {
 				const realPropName = propName.substring(1)
 				return (handler) => {
-					if (handler) return val => R.set(propProxy, realPropName, handler(val, R.get(unwrap(propProxy), realPropName), realPropName))
+					if (handler) return val => R.set(propProxy, realPropName, handler(val, R.get(targetObj, realPropName), realPropName))
 					return val => R.set(propProxy, realPropName, val)
 				}
 			}
@@ -25,20 +203,60 @@ const wrap = (target) => {
 				const realPropName = propName.substring(1)
 				return (handler) => {
 					if (handler) return () => handler(realPropName, propProxy)
-					return () => wrap(R.get(target, propName))
+					return () => wrapObj(R.get(target, realPropName), lifeCycle)
 				}
 			}
 
-			return wrap(R.get(target, propName))
+			if (signalMap[propName]) return signalMap[propName].signal
+
+			return wrapObj(R.get(target, propName), lifeCycle)
 		},
 		set(_, propName, val) {
 			if (propName[0] === '$' || propName[0] === '_') propName = propName.substring(1)
+
+			if (signalMap[propName]) {
+				if (val === signalMap[propName].signal) return true
+
+				signalMap[propName].disconnect()
+				delete signalMap[propName]
+			}
+
+			if (typeof val === 'function' && typeof val.connect === 'function') {
+
+				let settedUp = false
+
+				const setup = () => {
+					if (settedUp) return
+
+					const disconnect = val.connect(newVal => R.set(target, propName, newVal))
+					const disconnectSelf = lifeCycle.onAfterDetatch(() => {
+						disconnect()
+						disconnectSelf()
+						settedUp = false
+					})
+
+					settedUp = true
+				}
+
+				const disconnect = lifeCycle.onBeforeAttach(setup)
+
+				signalMap[propName] = {
+					signal: val,
+					setup,
+					disconnect
+				}
+
+				setTimeout(setup, 0)
+
+				return true
+			}
+
 			return R.set(target, propName, val)
 		},
 		apply(_, thisArg, argList) {
 			R.apply(target, unwrap(thisArg), argList)
 		}
-	})
+	}, targetObj, lifeCycle)
 
 	return propProxy
 }
@@ -65,12 +283,13 @@ const env = ({
 	addEventListener,
 	removeEventListener
 }, {
+	tags = null,
+	build = null,
 	currentNode = null,
 	currentNamespace = null,
+	// hydrating = null,
 	lifeCycleHooks = new WeakMap()
 } = {}) => {
-	let build = null
-	let tags = null
 
 	const prevNodes = []
 	const pushCurrentNode = (node) => {
@@ -124,76 +343,146 @@ const env = ({
 		return ret
 	}
 
+	const on = (...args) => addEventListener(currentNode, ...args)
+	const off = (...args) => removeEventListener(currentNode, ...args)
+
+	const useElement = () => currentNode
+	const useTags = (toKebab = true, namespace = null) => {
+		const getTag = namespaced(tagName => R.get(tags, tagName), namespace)
+		return proxify({
+			get(_, tagName) {
+				if (toKebab) tagName = camelToKebab(tagName)
+				return getTag(tagName)
+			}
+		})
+	}
+
+	let currentLifeCycleNode = null
+
+	const useLifeCycle = (target) => {
+		if (!target && currentLifeCycleNode) return useLifeCycle(currentLifeCycleNode)
+
+		target = unwrap(target || currentNode)
+		let hooks = lifeCycleHooks.get(target)
+		if (hooks) return hooks
+
+		const [beforeAttach, onBeforeAttach] = prepareHooks()
+		const [afterAttach, onAfterAttach] = prepareHooks()
+		const [beforeDetatch, onBeforeDetatch] = prepareHooks()
+		const [afterDetatch, onAfterDetatch] = prepareHooks()
+
+		hooks = {
+			beforeAttach,
+			afterAttach,
+			beforeDetatch,
+			afterDetatch,
+			onBeforeAttach,
+			onAfterAttach,
+			onBeforeDetatch,
+			onAfterDetatch
+		}
+
+		lifeCycleHooks.set(target, hooks)
+
+		return hooks
+	}
+
+	const withLifeCycle = (handler, target = currentNode) => {
+		const prevNode = currentLifeCycleNode
+		currentLifeCycleNode = target
+
+		const ret = handler()
+
+		currentLifeCycleNode = prevNode
+		return ret
+	}
+
+	const wrap = (target, lifeCycle = useLifeCycle()) => wrapObj(target, lifeCycle)
+
+	const attrProxyMap = new WeakMap()
+
+	const toAttr = (target) => {
+		if (attrProxyMap.has(target)) return attrProxyMap.get(target)
+
+		const attrProxy = new Proxy(target, {
+			get(_, attrName) {
+				return getAttr(target, attrName, currentNamespace)
+			},
+			set(_, attrName, val) {
+				if (val === null) removeAttr(target, attrName, currentNamespace)
+				setAttr(target, attrName, val, currentNamespace)
+				return true
+			}
+		})
+
+		attrProxyMap.set(target, attrProxy)
+
+		return attrProxy
+	}
+
 	const attr = proxify({
 		get(_, attrName) {
-			const target = currentNode
-			const namespace = currentNamespace
-
-			if (attrName[0] === '$') {
-				const realAttrName = attrName.substring(1)
-				return (handler) => {
-					if (handler) return val => setAttr(target, realAttrName, handler(val, getAttr(target, realAttrName), realAttrName, namespace), namespace)
-					return val => setAttr(target, realAttrName, val, namespace)
-				}
-			}
-
-			if (attrName[0] === '_') {
-				const realAttrName = attrName.substring(1)
-				return (handler) => {
-					if (handler) return () => handler(realAttrName, target, namespace)
-					return () => getAttr(target, realAttrName, namespace)
-				}
-			}
-
-			return getAttr(target, attrName, namespace)
+			return R.get(wrap(toAttr(currentNode)), attrName)
 		},
 		set(_, attrName, val) {
-			if (attrName[0] === '$' || attrName[0] === '_') attrName = attrName.substring(1)
-			if (val === null) removeAttr(currentNode, attrName, currentNamespace)
-			else setAttr(currentNode, attrName, val, currentNamespace)
-			return true
+			return R.set(wrap(toAttr(currentNode)), attrName, val)
 		}
 	})
+	const useAttr = (capture = true, toKebab = true, namespace = null) => {
+		const scope = capture && currentNode || null
+		const getAttribute = scoped(namespaced(attrName => R.get(attr, attrName), namespace), scope)
+		const setAttribute = scoped(namespaced((attrName, val) => R.set(attr, attrName, val), namespace), scope)
+
+		return proxify({
+			get(_, attrName) {
+				if (toKebab) attrName = camelToKebab(attrName)
+				return getAttribute(attrName)
+			},
+			set(_, attrName, val) {
+				if (toKebab) attrName = camelToKebab(attrName)
+				return setAttribute(attrName, val)
+			}
+		})
+	}
 
 	const prop = proxify({
 		get(_, propName) {
-			if (propName === TARGET_SYMBOL) return currentNode
-			const target = currentNode
-			if (propName[0] === '$') {
-				const realPropName = propName.substring(1)
-				return (handler) => {
-					if (handler) return val => R.set(target, realPropName, handler(val, R.get(target, realPropName), realPropName))
-					return val => R.set(target, realPropName, val)
-				}
-			}
-
-			if (propName[0] === '_') {
-				const realPropName = propName.substring(1)
-				return (handler) => {
-					if (handler) return () => handler(realPropName, target)
-					return () => R.get(target, realPropName)
-				}
-			}
-
-			return wrap(R.get(target, propName))
+			return R.get(wrap(currentNode), propName)
 		},
 		set(_, propName, val) {
-			if (propName[0] === '$' || propName[0] === '_') propName = propName.substring(1)
-			R.set(currentNode, propName, val)
-			return true
+			return R.set(wrap(currentNode), propName, val)
 		}
 	})
+	const useProp = () => {
+		const getProp = scoped(propName => R.get(prop, propName))
+		const setProp = scoped((propName, val) => R.set(prop, propName, val))
 
-	const text = (str = '') => {
-		const textNode = createTextNode(str)
+		return proxify({
+			get(_, propName) {
+				return getProp(propName)
+			},
+			set(_, propName, val) {
+				return setProp(propName, val)
+			}
+		})
+	}
+
+	const text = (initVal) => {
+		const textNode = createTextNode('')
+		pushCurrentNode(textNode)
 		const wrappedNode = wrap(textNode)
+		if (initVal) wrappedNode.textContent = initVal
+		popCurrentNode()
 		if (currentNode) appendChild(currentNode, textNode)
 		return wrappedNode
 	}
 
-	const comment = (str = '') => {
-		const commentNode = createComment(str)
+	const comment = (initVal) => {
+		const commentNode = createComment('')
+		pushCurrentNode(commentNode)
 		const wrappedNode = wrap(commentNode)
+		if (initVal) wrappedNode.textContent = initVal
+		popCurrentNode()
 		if (currentNode) appendChild(currentNode, commentNode)
 		return wrappedNode
 	}
@@ -231,92 +520,6 @@ const env = ({
 		if (builder) ret.append(builder)
 
 		return ret
-	}
-
-	const on = (...args) => addEventListener(currentNode, ...args)
-	const off = (...args) => removeEventListener(currentNode, ...args)
-
-	const useElement = () => currentNode
-	const useTags = (toKebab = true, namespace = null) => {
-		const getTag = namespaced(tagName => R.get(tags, tagName), namespace)
-		return proxify({
-			get(_, tagName) {
-				if (toKebab) tagName = camelToKebab(tagName)
-				return getTag(tagName)
-			}
-		})
-	}
-	const useAttr = (capture = true, toKebab = true, namespace = null) => {
-		const scope = capture && currentNode || null
-		const getAttr = scoped(namespaced(attrName => R.get(attr, attrName), namespace), scope)
-		const setAttr = scoped(namespaced((attrName, val) => R.set(attr, attrName, val), namespace), scope)
-		return proxify({
-			get(_, attrName) {
-				if (toKebab) attrName = camelToKebab(attrName)
-				return getAttr(attrName)
-			},
-			set(_, attrName, val) {
-				if (toKebab) attrName = camelToKebab(attrName)
-				return setAttr(attrName, val)
-			}
-		})
-	}
-	const useProp = () => {
-		const getProp = scoped(propName => R.get(prop, propName))
-		const setProp = scoped((propName, val) => R.set(prop, propName, val))
-		return proxify({
-			get(_, propName) {
-				return getProp(propName)
-			},
-			set(_, propName, val) {
-				return setProp(propName, val)
-			}
-		})
-	}
-
-	const prepareHooks = () => {
-		let hooks = new Set()
-		const runHooks = (...args) => hooks.forEach(hook => hook(...args))
-
-		const addHooks = (...newHooks) => {
-			for (let i of newHooks) hooks.add(i)
-		}
-
-		const removeHooks = (...oldHooks) => {
-			for (let i of oldHooks) hooks.delete(i)
-		}
-
-		return [runHooks, addHooks, removeHooks]
-	}
-
-	const useLifeCycle = (target) => {
-		if (!target) target = currentNode
-		let hooks = lifeCycleHooks.get(target)
-		if (hooks) return hooks
-
-		const [beforeAttach, onBeforeAttach, offBeforeAttach] = prepareHooks()
-		const [afterAttach, onAfterAttach, offAfterAttach] = prepareHooks()
-		const [beforeDetatch, onBeforeDetatch, offBeforeDetatch] = prepareHooks()
-		const [afterDetatch, onAfterDetatch, offAfterDetatch] = prepareHooks()
-
-		hooks = {
-			beforeAttach,
-			afterAttach,
-			beforeDetatch,
-			afterDetatch,
-			onBeforeAttach,
-			onAfterAttach,
-			onBeforeDetatch,
-			onAfterDetatch,
-			offBeforeAttach,
-			offAfterAttach,
-			offBeforeDetatch,
-			offAfterDetatch
-		}
-
-		lifeCycleHooks.set(target, hooks)
-
-		return hooks
 	}
 
 	const adopt = (rawElement, clone) => (builder, append = true) => {
@@ -370,11 +573,14 @@ const env = ({
 				element,
 				on,
 				off,
+				mux,
+				useSignal,
 				useTags,
 				useElement,
 				useAttr,
 				useProp,
 				useLifeCycle,
+				withLifeCycle,
 				tags,
 				attr,
 				prop,
@@ -394,105 +600,113 @@ const env = ({
 		return {element, ret, attach, detatch, before, after}
 	}
 
-	tags = proxify({
-		get(_, tagName) {
-			const namespace = currentNamespace
-			return (builder, append) => {
-				const element = createElement(tagName, namespace)
-				return adopt(element, false)(builder, append)
+	if (!tags) {
+		tags = proxify({
+			get(_, tagName) {
+				const namespace = currentNamespace
+				return (builder, append) => {
+					const element = createElement(tagName, namespace)
+					return adopt(element, false)(builder, append)
+				}
 			}
-		}
-	})
+		})
+	}
 
-	build = (builder, append = true) => {
-		const elementStore = createDocumentFragment()
-		const startAnchor = createTextNode('')
-		const endAnchor = createTextNode('')
+	if (!build) {
+		build = (builder, append = true) => {
+			const elementStore = createDocumentFragment()
+			const startAnchor = createTextNode('')
+			const endAnchor = createTextNode('')
 
-		builder = clearNamespace(builder)
+			builder = clearNamespace(builder)
 
-		appendChild(elementStore, startAnchor)
-		appendChild(elementStore, endAnchor)
-
-		pushCurrentNode(elementStore)
-
-		const {beforeAttach, afterAttach, beforeDetatch, afterDetatch} = useLifeCycle(elementStore)
-
-		const detatch = () => {
-			beforeDetatch()
-
-			let currentElement = startAnchor
-			while (currentElement !== endAnchor) {
-				const nextElement = getNextSibling(currentElement)
-				appendChild(elementStore, currentElement)
-				currentElement = nextElement
-			}
+			appendChild(elementStore, startAnchor)
 			appendChild(elementStore, endAnchor)
 
-			afterDetatch()
-		}
-		const attach = (target) => {
-			if (!target) target = currentNode
-			if (!target) return
+			pushCurrentNode(elementStore)
 
-			detatch()
+			const {beforeAttach, afterAttach, beforeDetatch, afterDetatch} = useLifeCycle(elementStore)
 
-			beforeAttach(target)
+			const detatch = () => {
+				beforeDetatch()
 
-			appendChild(target, startAnchor)
-			appendChild(target, elementStore)
-			appendChild(target, endAnchor)
+				let currentElement = startAnchor
+				while (currentElement !== endAnchor) {
+					const nextElement = getNextSibling(currentElement)
+					appendChild(elementStore, currentElement)
+					currentElement = nextElement
+				}
+				appendChild(elementStore, endAnchor)
 
-			afterAttach(target)
-		}
-		const before = (builder) => {
-			const tempStore = createDocumentFragment()
-			const ret = scoped(build, tempStore)(builder)
-			appendBefore(startAnchor, tempStore)
+				afterDetatch()
+			}
+			const attach = (target) => {
+				if (!target) target = currentNode
+				if (!target) return
+
+				detatch()
+
+				beforeAttach(target)
+
+				appendChild(target, startAnchor)
+				appendChild(target, elementStore)
+				appendChild(target, endAnchor)
+
+				afterAttach(target)
+			}
+			const before = (builder) => {
+				const tempStore = createDocumentFragment()
+				const ret = scoped(build, tempStore)(builder)
+				appendBefore(startAnchor, tempStore)
+				return ret
+			}
+			const after = (builder) => {
+				const tempStore = createDocumentFragment()
+				const ret = scoped(build, tempStore)(builder)
+				appendAfter(endAnchor, tempStore)
+				return ret
+			}
+
+			const ret = builder({
+				build,
+				adopt,
+				text,
+				comment,
+				fragment,
+				scoped,
+				namespaced,
+				clearScope,
+				clearNamespace,
+				on,
+				off,
+				mux,
+				useSignal,
+				useTags,
+				useElement,
+				useAttr,
+				useProp,
+				useLifeCycle,
+				withLifeCycle,
+				tags,
+				attr,
+				prop,
+				attach,
+				detatch,
+				before,
+				after,
+				startAnchor,
+				endAnchor
+			})
+
+			popCurrentNode()
+			if (currentNode && append) attach(currentNode)
+
 			return ret
 		}
-		const after = (builder) => {
-			const tempStore = createDocumentFragment()
-			const ret = scoped(build, tempStore)(builder)
-			appendAfter(endAnchor, tempStore)
-			return ret
-		}
-
-		const ret = builder({
-			build,
-			adopt,
-			text,
-			comment,
-			fragment,
-			scoped,
-			namespaced,
-			clearScope,
-			clearNamespace,
-			on,
-			off,
-			useTags,
-			useElement,
-			useAttr,
-			useProp,
-			useLifeCycle,
-			tags,
-			attr,
-			prop,
-			attach,
-			detatch,
-			before,
-			after,
-			startAnchor,
-			endAnchor
-		})
-
-		popCurrentNode()
-		if (currentNode && append) attach(currentNode)
-
-		return ret
 	}
 
 	return {
+		wrap,
 		build,
 		adopt,
 		text,
@@ -504,11 +718,14 @@ const env = ({
 		clearNamespace,
 		on,
 		off,
+		mux,
+		useSignal,
 		useTags,
 		useElement,
 		useAttr,
 		useProp,
 		useLifeCycle,
+		withLifeCycle,
 		tags: useTags(),
 		attr: useAttr(false),
 		prop
@@ -589,6 +806,7 @@ const browser = (doc = document, userNamespaceMap = {}) => {
 
 let globalCtx = null
 
+const wrap = (...args) => globalCtx.wrap(...args)
 const build = (...args) => globalCtx.build(...args)
 const adopt = (...args) => globalCtx.adopt(...args)
 const text = (...args) => globalCtx.text(...args)
@@ -605,6 +823,7 @@ const useElement = (...args) => globalCtx.useElement(...args)
 const useAttr = (...args) => globalCtx.useAttr(...args)
 const useProp = (...args) => globalCtx.useProp(...args)
 const useLifeCycle = (...args) => globalCtx.useLifeCycle(...args)
+const withLifeCycle = (...args) => globalCtx.withLifeCycle(...args)
 const tags = proxify({
 	get(_, tagName) {
 		return (...args) => R.get(globalCtx.tags, tagName)(...args)
@@ -649,11 +868,14 @@ export {
 	clearNamespace,
 	on,
 	off,
+	mux,
+	useSignal,
 	useElement,
 	useTags,
 	useAttr,
 	useProp,
 	useLifeCycle,
+	withLifeCycle,
 	tags,
 	attr,
 	prop,
