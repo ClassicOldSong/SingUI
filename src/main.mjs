@@ -207,8 +207,6 @@ const wrapObj = (target, lifeCycle) => {
 				}
 			}
 
-			if (signalMap[propName]) return signalMap[propName].signal
-
 			return wrapObj(R.get(target, propName), lifeCycle)
 		},
 		set(_, propName, val) {
