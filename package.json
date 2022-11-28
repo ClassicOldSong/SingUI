@@ -1,6 +1,6 @@
 {
   "name": "singui",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "The next-gen, no compile/transpile needed, self-contained JS UI library",
   "main": "dist/main.min.js",
   "module": "src/main.mjs",
@@ -9,11 +9,14 @@
     "build": "rollup -c ./rollup.esbuild.config.mjs"
   },
   "exports": {
-    "module": "src/main.mjs",
-    "script": "dist/main.umd.min.js",
-    "require": "dist/main.min.cjs",
-    "node": "src/main.mjs",
-    "default": "dist/main.min.js"
+    "./package.json": "./package.json",
+    ".": {
+      "module": "src/main.mjs",
+      "script": "dist/main.umd.min.js",
+      "require": "dist/main.min.cjs",
+      "node": "src/main.mjs",
+      "default": "dist/main.min.js"
+    }
   },
   "files": [
     "src/**/*",
