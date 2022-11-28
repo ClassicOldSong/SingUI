@@ -147,15 +147,19 @@ const mux = (...args) => {
 		if (strMux.disconnect(handler)) cleanup()
 	}
 
+	let muxedSignal = null
+
 	const watch = (...signals) => {
 		if (!disconnectList) init()
 
 		for (let i of signals) {
 			disconnectList.push(i.connect(flush))
 		}
+
+		return muxedSignal
 	}
 
-	const muxedSignal = (...args) => {
+	muxedSignal = (...args) => {
 		if (!args.length) return strMux()
 		return watch(...args)
 	}
