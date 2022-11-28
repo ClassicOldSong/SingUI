@@ -119,35 +119,56 @@ const mux = (...args) => {
 		handlerCount = 0
 	}
 
-	const connect = (...handlers) => {
-		if (!handlers.length) return strMux()
+	const cleanup = () => {
+		handlerCount -= 1
+		if (handlerCount <= 0) destroy()
+	}
+
+	const connect = (handler) => {
+		if (!handler) return strMux()
 
 		if (!disconnectList) init()
 
-		const disconnect = strMux.connect(...handlers)
-		handlerCount += handlers.length
+		handlerCount += 1
 
-		let disconnected = false
+		const disconnectHandler = strMux.connect(handler)
 
 		return () => {
-			if (disconnected) return
+			if (disconnectHandler()) {
+				cleanup()
+				return true
+			}
 
-			disconnect()
-			handlerCount -= handlers.length
-			if (handlerCount <= 0) destroy()
-
-			disconnected = true
+			return false
 		}
 	}
 
-	const signal = () => strMux()
+	const disconnect = (handler) => {
+		if (strMux.disconnect(handler)) cleanup()
+	}
 
-	signal.connect = connect
-	signal.pause = pause
-	signal.resume = resume
-	signal.batch = batch
+	const watch = (...signals) => {
+		if (!disconnectList) init()
 
-	return signal
+		for (let i of signals) {
+			disconnectList.push(i.connect(flush))
+		}
+	}
+
+	const muxedSignal = (...args) => {
+		if (!args.length) return strMux()
+		return watch(...args)
+	}
+
+	muxedSignal.connect = connect
+	muxedSignal.disconnect = disconnect
+	muxedSignal.pause = pause
+	muxedSignal.resume = resume
+	muxedSignal.batch = batch
+	muxedSignal.flush = flush
+	muxedSignal.watch = watch
+
+	return muxedSignal
 }
 
 const getCachedProxy = (target, lifeCycle) => {
